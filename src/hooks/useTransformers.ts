@@ -8,6 +8,21 @@ env.allowLocalModels = false;
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
 
+// Debug: Intercept fetch to see what URLs are being requested
+const originalFetch = window.fetch;
+window.fetch = async (...args) => {
+    const url = args[0];
+    console.log('[FETCH]', typeof url === 'string' ? url : (url as Request).url);
+    try {
+        const response = await originalFetch(...args);
+        console.log('[FETCH RESPONSE]', response.status, response.headers.get('content-type'));
+        return response;
+    } catch (e) {
+        console.error('[FETCH ERROR]', e);
+        throw e;
+    }
+};
+
 // Type for the pipeline result
 type TextGenPipeline = Awaited<ReturnType<typeof pipeline<'text-generation'>>>;
 
@@ -68,10 +83,11 @@ export function useTransformers() {
             });
 
             setLoadProgress(100);
-        } catch (e) {
-            const message = e instanceof Error ? e.message : 'Failed to load model';
+        } catch (e: any) {
+            console.error('Model loading error (full):', e);
+            console.error('Error stack:', e?.stack);
+            const message = e instanceof Error ? e.message : String(e);
             setError(message);
-            console.error('Model loading error:', e);
         } finally {
             setIsLoading(false);
         }
@@ -92,8 +108,18 @@ export function useTransformers() {
 
             // Tokenize input to get token strings for visualization
             const encoded = await tokenizer(prompt, { return_tensors: false });
-            const inputTokens = encoded.input_ids.map((id: number) =>
-                tokenizer.decode([id])
+
+            // In transformers.js v3, input_ids might be BigInt64Array or array of BigInts
+            // We need to convert them to numbers for the decode function if strictly typed, 
+            // but just passing them to decode([id]) should work if id is the correct type.
+            // The error "Cannot convert The to a BigInt" actually looks like something is trying 
+            // to cast the STRING "The" to BigInt. 
+            // This implies `encoded.input_ids` might not be what we expect.
+
+            // Let's coerce to array and safe map
+            const inputIds = Array.from(encoded.input_ids);
+            const inputTokens = inputIds.map((id: any) =>
+                tokenizer.decode([Number(id)])
             );
 
             // Generate with attention output enabled
@@ -131,8 +157,9 @@ export function useTransformers() {
 
             // Tokenize full output for display
             const outputEncoded = await tokenizer(outputText, { return_tensors: false });
-            allTokens = outputEncoded.input_ids.map((id: number) =>
-                tokenizer.decode([id])
+            const outputIds = Array.from(outputEncoded.input_ids);
+            allTokens = outputIds.map((id: any) =>
+                tokenizer.decode([Number(id)])
             );
 
             // Detect interpretable circuits in attention patterns
