@@ -1,14 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { GenerationConfig } from '../types';
 
 interface PromptInputProps {
     onRun: (prompt: string, config: GenerationConfig) => void;
     isRunning: boolean;
     disabled: boolean;
+    externalPrompt?: string; // Allow external control of prompt
 }
 
-export function PromptInput({ onRun, isRunning, disabled }: PromptInputProps) {
+export function PromptInput({ onRun, isRunning, disabled, externalPrompt }: PromptInputProps) {
     const [prompt, setPrompt] = useState('The quick brown fox');
+
+    // Update prompt when external prompt changes
+    useEffect(() => {
+        if (externalPrompt !== undefined) {
+            setPrompt(externalPrompt);
+        }
+    }, [externalPrompt]);
     const [maxTokens, setMaxTokens] = useState(20);
     const [temperature, setTemperature] = useState(0.7);
 

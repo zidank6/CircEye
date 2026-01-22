@@ -23,6 +23,7 @@ function App() {
 
     const [result, setResult] = useState<InferenceResult | null>(null);
     const [svgElement, setSvgElement] = useState<SVGSVGElement | null>(null);
+    const [selectedPrompt, setSelectedPrompt] = useState<string | undefined>(undefined);
 
     const handleRun = async (prompt: string, config: GenerationConfig) => {
         const res = await runInference(prompt, config);
@@ -65,8 +66,9 @@ function App() {
 
                     <PromptInput
                         onRun={handleRun}
-                        isRunning={isLoading} // Reuse loading state for inference busy state
+                        isRunning={isLoading}
                         disabled={!modelInfo?.loaded}
+                        externalPrompt={selectedPrompt}
                     />
 
                     {modelInfo?.loaded && (
@@ -118,7 +120,10 @@ function App() {
                     {result && (
                         <>
                             <CircuitGraph circuits={result.circuits} />
-                            <ExplanationPanel circuits={result.circuits} />
+                            <ExplanationPanel
+                                circuits={result.circuits}
+                                onPromptSelect={setSelectedPrompt}
+                            />
                         </>
                     )}
                 </aside>

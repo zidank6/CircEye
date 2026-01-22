@@ -330,3 +330,50 @@ input, select, textarea {
   margin-top: 2px;
 }
 
+
+
+/* Test prompts and suggestions */
+.test-prompt {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(78, 205, 196, 0.1);
+  border-left: 2px solid #4ecdc4;
+  font-size: 0.8rem;
+}
+
+.test-prompt strong {
+  color: #4ecdc4;
+}
+
+.prompt-suggestions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.prompt-suggestions li {
+  margin-bottom: 8px;
+}
+
+.prompt-suggestions code {
+  display: block;
+  padding: 6px 8px;
+  background: #1a1a2e;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.prompt-suggestions code:hover {
+  background: #2a2a4e;
+}
+
+
+
+.click-hint {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
