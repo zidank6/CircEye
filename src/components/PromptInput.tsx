@@ -9,7 +9,7 @@ interface PromptInputProps {
 }
 
 export function PromptInput({ onRun, isRunning, disabled, externalPrompt }: PromptInputProps) {
-    const [prompt, setPrompt] = useState('The quick brown fox');
+    const [prompt, setPrompt] = useState('The cat sat on the mat. The cat sat on the');
 
     // Update prompt when external prompt changes
     useEffect(() => {

@@ -198,6 +198,7 @@ export function useTransformers() {
                         attention_mask: attentionMask,
                         position_ids: positionIds,
                         output_attentions: true,
+                        output_hidden_states: true,
                     });
 
                     console.log('Model output keys:', Object.keys(modelOutput));
@@ -273,6 +274,28 @@ export function useTransformers() {
                 numLayersForLens
             );
 
+            // Extract hidden states for real ablation computation
+            let hiddenStates: number[][][] | null = null;
+            if (modelOutput?.hidden_states) {
+                try {
+                    hiddenStates = await extractHiddenStates(modelOutput.hidden_states);
+                    console.log(`✓ Extracted hidden states: ${hiddenStates.length} layers`);
+                } catch (hsError) {
+                    console.warn('Failed to extract hidden states:', hsError);
+                }
+            }
+
+            // Extract raw logits for ablation impact computation
+            let rawLogits: number[] | null = null;
+            if (modelOutput?.logits) {
+                try {
+                    rawLogits = extractRawLogits(modelOutput.logits);
+                    console.log(`✓ Extracted raw logits: ${rawLogits.length} entries`);
+                } catch (logitError) {
+                    console.warn('Failed to extract raw logits:', logitError);
+                }
+            }
+
             return {
                 output: outputText,
                 tokens: allTokens,
@@ -280,6 +303,8 @@ export function useTransformers() {
                 attentionSource,
                 circuits,
                 topPredictions,
+                hiddenStates,
+                rawLogits,
             };
         } catch (e) {
             const message = e instanceof Error ? e.message : 'Inference failed';
@@ -320,7 +345,8 @@ export function useTransformers() {
         loadModel,
         runInference,
         unloadModel,
-        clearCache
+        clearCache,
+        getTokenizer: () => tokenizerRef.current,
     };
 }
 
@@ -548,4 +574,58 @@ async function getTopPredictions(
     }
 
     return predictions;
+}
+
+// Extract hidden states from model output
+async function extractHiddenStates(hiddenStatesOutput: any[]): Promise<number[][][]> {
+    const hiddenStates: number[][][] = [];
+
+    for (const layerHidden of hiddenStatesOutput) {
+        let data: Float32Array | number[];
+        if (layerHidden.data) {
+            data = layerHidden.data;
+        } else if (layerHidden.ort_tensor?.cpuData) {
+            data = layerHidden.ort_tensor.cpuData;
+        } else {
+            data = await layerHidden.tolist();
+        }
+
+        const dims = layerHidden.dims || layerHidden.shape || [1, 0, 0];
+        const [_batch, seqLen, hiddenDim] = dims;
+
+        if (!seqLen || !hiddenDim) continue;
+
+        const layerData: number[][] = [];
+        for (let i = 0; i < seqLen; i++) {
+            const row: number[] = [];
+            for (let j = 0; j < hiddenDim; j++) {
+                const idx = i * hiddenDim + j;
+                row.push(Number(data[idx]) || 0);
+            }
+            layerData.push(row);
+        }
+        hiddenStates.push(layerData);
+    }
+
+    return hiddenStates;
+}
+
+// Extract raw logits for the final position
+function extractRawLogits(logits: any): number[] {
+    let logitsData: Float32Array | number[];
+    if (logits.data) {
+        logitsData = logits.data;
+    } else if (logits.ort_tensor?.cpuData) {
+        logitsData = logits.ort_tensor.cpuData;
+    } else {
+        return [];
+    }
+
+    const dims = logits.dims || logits.shape || [];
+    const vocabSize = dims[dims.length - 1] || 50257;
+    const seqLen = dims.length > 2 ? dims[1] : 1;
+
+    // Get logits for the last position
+    const lastPosStart = (seqLen - 1) * vocabSize;
+    return Array.from(logitsData.slice(lastPosStart, lastPosStart + vocabSize)).map(Number);
 }

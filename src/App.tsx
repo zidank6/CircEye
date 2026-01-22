@@ -23,7 +23,8 @@ function App() {
         error,
         loadModel,
         runInference,
-        unloadModel
+        unloadModel,
+        getTokenizer
     } = useTransformers();
 
     const {
@@ -54,13 +55,13 @@ function App() {
 
     const handleAblation = (mask: AblationMask[]) => {
         if (result?.attentions) {
-            runAblation(result.attentions, mask);
+            runAblation(result.attentions, mask, result.rawLogits, getTokenizer());
         }
     };
 
     const handleAblateCircuit = (circuit: DetectedCircuit) => {
         if (result?.attentions) {
-            runAblation(result.attentions, [{ layer: circuit.layer, head: circuit.head }]);
+            runAblation(result.attentions, [{ layer: circuit.layer, head: circuit.head }], result.rawLogits, getTokenizer());
         }
     };
 
@@ -184,7 +185,6 @@ function App() {
                         </>
                     )}
                     <ExplanationPanel
-                        circuits={result?.circuits || []}
                         onPromptSelect={setSelectedPrompt}
                     />
                 </aside>

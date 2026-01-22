@@ -33,6 +33,24 @@ export interface InferenceResult {
     attentionSource: AttentionSource; // Indicates data quality for research
     circuits: CircuitInfo[];
     topPredictions: TokenPrediction[][];
+    hiddenStates: number[][][] | null; // [layers+1, seq, hidden_dim] - includes embedding layer
+    rawLogits: number[] | null; // Final position logits [vocab_size]
+}
+
+export interface AblationImpact {
+    originalTopToken: string;
+    originalTopProb: number;
+    ablatedTopToken: string;
+    ablatedTopProb: number;
+    probabilityShift: number; // Change in top-1 probability
+    entropyChange: number; // Change in output entropy (positive = more uncertain)
+    klDivergence: number; // KL divergence between original and ablated distributions
+    rankChanges: {
+        token: string;
+        originalRank: number;
+        ablatedRank: number;
+        probChange: number;
+    }[];
 }
 
 export interface TokenPrediction {

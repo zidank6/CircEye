@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import type { CircuitInfo } from '../types';
+import type { CircuitInfo, AblationImpact } from '../types';
+import { useRealAblation } from './useRealAblation';
 
 export interface AblationMask {
     layer: number;
@@ -10,7 +11,9 @@ export interface AblationResult {
     originalAttentions: number[][][][] | null;
     ablatedAttentions: number[][][][] | null;
     ablatedHeads: AblationMask[];
-    impactScore: number; // How much the output changed (0-1)
+    impactScore: number; // Legacy: attention pattern difference (0-1)
+    realImpact: AblationImpact | null; // New: actual output impact analysis
+    headContributions: { layer: number; head: number; importance: number; percentage: number }[];
 }
 
 // Apply ablation by zeroing out specified heads
@@ -40,7 +43,7 @@ export function applyAblationToAttention(
     return ablated;
 }
 
-// Calculate how different two attention patterns are
+// Calculate how different two attention patterns are (legacy metric)
 export function calculateImpactScore(
     original: number[][][][],
     ablated: number[][][][]
@@ -72,9 +75,13 @@ export function useAblation() {
     const [ablationResult, setAblationResult] = useState<AblationResult | null>(null);
     const [isComparing, setIsComparing] = useState(false);
 
+    const { computeAblationImpact, analyzeHeadContributions } = useRealAblation();
+
     const runAblation = useCallback((
         originalAttentions: number[][][][],
-        headMask: AblationMask[]
+        headMask: AblationMask[],
+        rawLogits?: number[] | null,
+        tokenizer?: any
     ) => {
         if (!originalAttentions || headMask.length === 0) {
             setAblationResult(null);
@@ -84,17 +91,33 @@ export function useAblation() {
         const ablated = applyAblationToAttention(originalAttentions, headMask);
         const impact = calculateImpactScore(originalAttentions, ablated);
 
+        // Compute real ablation impact if we have logits
+        let realImpact: AblationImpact | null = null;
+        if (rawLogits && rawLogits.length > 0) {
+            realImpact = computeAblationImpact(
+                originalAttentions,
+                rawLogits,
+                headMask,
+                tokenizer
+            );
+        }
+
+        // Analyze head contributions
+        const headContributions = analyzeHeadContributions(originalAttentions, headMask);
+
         const result: AblationResult = {
             originalAttentions,
             ablatedAttentions: ablated,
             ablatedHeads: headMask,
-            impactScore: impact
+            impactScore: impact,
+            realImpact,
+            headContributions,
         };
 
         setAblationResult(result);
         setIsComparing(true);
         return result;
-    }, []);
+    }, [computeAblationImpact, analyzeHeadContributions]);
 
     const clearAblation = useCallback(() => {
         setAblationResult(null);
@@ -104,13 +127,15 @@ export function useAblation() {
     // Auto-ablate detected circuits to see their importance
     const ablateCircuits = useCallback((
         originalAttentions: number[][][][],
-        circuits: CircuitInfo[]
+        circuits: CircuitInfo[],
+        rawLogits?: number[] | null,
+        tokenizer?: any
     ) => {
         const headMask = circuits.map(c => ({
             layer: c.layer,
             head: c.head
         }));
-        return runAblation(originalAttentions, headMask);
+        return runAblation(originalAttentions, headMask, rawLogits, tokenizer);
     }, [runAblation]);
 
     return {
