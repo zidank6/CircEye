@@ -1,0 +1,157 @@
+================================================================================
+LOCAL LLM CIRCUIT VISUALIZER - BUILD LOG
+================================================================================
+
+2026-01-22 14:00 - STEP 1: PROJECT INITIALIZATION & ARCHITECTURE PLANNING
+--------------------------------------------------------------------------------
+WHAT: Setting up Tauri v2 project structure with Vite + React + TypeScript
+WHY: Tauri 2 provides secure, lightweight desktop apps with native Rust backend.
+     Vite offers fast HMR for dev experience. React + TS for type-safe UI.
+
+MOVING PARTS:
+- Tauri v2 uses a split architecture:
+  * Frontend (WebView): Runs in system WebView (WebKit on macOS, WebView2 on Windows)
+  * Backend (Rust): Native process that can access filesystem, spawn processes
+  * IPC Bridge: Frontend calls Rust via `invoke()` from @tauri-apps/api
+
+- For this app, we're running transformers.js ENTIRELY in the frontend WebView:
+  * Avoids complex Rust↔JS serialization of large tensors
+  * WebView has WASM support needed for transformers.js
+  * WebGPU (if available) accelerates inference in browser context
+
+- Rust backend used only for:
+  * File dialogs (native feel)
+  * Saving exports to filesystem
+  * Future: heavy compute if needed
+
+PITFALLS:
+- WebView WASM memory limit (~4GB on 64-bit) constrains model size
+- IndexedDB stores cached models (~50MB for distilgpt2)
+- Must configure CSP in tauri.conf.json to allow WASM execution
+
+================================================================================
+
+2026-01-22 14:15 - STEP 2: DEPENDENCY SELECTION & PACKAGE.JSON
+--------------------------------------------------------------------------------
+WHAT: Choosing minimal dependencies for the MVP
+WHY: Fewer deps = smaller bundle, fewer security issues, faster installs
+
+DEPENDENCIES:
+- @huggingface/transformers: The star - runs ONNX models in browser via WASM/WebGPU
+  * Automatically caches models to IndexedDB after first download
+  * Supports distilgpt2, gpt2, and other small models from Xenova's repos
+
+- d3: Industry standard for data visualization
+  * Using for attention heatmaps (matrix viz) and circuit graphs (force layout)
+  * SVG-based = easy PNG/SVG export via serialization
+
+- @tauri-apps/plugin-dialog: Tauri 2 plugin for dialogs
+- @tauri-apps/plugin-fs: Tauri 2 plugin for filesystem access
+
+DATA FLOW:
+User types prompt → React state updates → "Run" clicked → transformers.js tokenizes →
+model.generate() with output_attentions=true → Attention tensors extracted →
+Passed to D3 components → Rendered as SVG
+
+================================================================================
+
+2026-01-22 14:30 - STEP 3: TAURI CONFIGURATION (tauri.conf.json)
+--------------------------------------------------------------------------------
+WHAT: Configuring Tauri 2 security policies and window settings
+WHY: Tauri's security model requires explicit capability grants
+
+KEY CONFIGURATIONS:
+- Security allowlist:
+  * dialog:allow-open, dialog:allow-save for file pickers
+  * fs:allow-write for saving exports (scoped to user-selected paths)
+
+- CSP (Content Security Policy):
+  * Must allow 'wasm-unsafe-eval' for transformers.js WASM execution
+  * Allow blob: and data: for model loading
+  * Connect to huggingface.co for model downloads
+
+================================================================================
+
+2026-01-22 14:45 - STEP 4: RUST BACKEND (src-tauri/src/main.rs)
+--------------------------------------------------------------------------------
+WHAT: Minimal Rust backend for file operations
+WHY: Native file dialogs feel better than web-based ones
+
+RUST COMMANDS:
+- save_file: Takes bytes + path, writes to disk
+  * Used for exporting visualizations
+
+HOW TAURI IPC WORKS:
+1. Frontend calls: invoke('save_file', { path: '...', data: [...] })
+2. Tauri serializes args to JSON
+3. Rust command receives deserialized args
+4. Rust returns Result<T, E> → serialized back to frontend
+5. Frontend receives Promise<T>
+
+================================================================================
+
+2026-01-22 15:00 - STEP 5: TRANSFORMERS.JS INTEGRATION (useTransformers.ts)
+--------------------------------------------------------------------------------
+WHAT: Custom React hook for model loading and inference
+WHY: Encapsulates async model lifecycle, provides clean API to components
+
+MODEL LOADING FLOW:
+1. User clicks "Load Model" or types model ID (e.g., "Xenova/distilgpt2")
+2. Hook calls pipeline('text-generation', modelId, { ... })
+3. transformers.js checks IndexedDB cache
+4. If not cached: Downloads from Hugging Face Hub (~50MB for distilgpt2)
+5. ONNX model loaded into WASM runtime (or WebGPU if available)
+
+================================================================================
+
+2026-01-22 15:30 - STEP 6: ATTENTION VISUALIZATION (AttentionViz.tsx)
+--------------------------------------------------------------------------------
+WHAT: D3-based interactive heatmap for attention matrices
+WHY: Attention patterns reveal how model processes information
+
+D3 IMPLEMENTATION:
+1. Create SVG with viewBox for responsiveness
+2. Use d3.scaleSequential with d3.interpolateBlues
+3. Render rect elements in grid pattern
+4. Add axis labels showing actual tokens (re-implemented after initial truncation)
+5. Tooltip on hover showing exact attention value
+
+================================================================================
+
+2026-01-22 16:00 - STEP 9: CIRCUIT GRAPH & PANELS (CircuitGraph.tsx, etc.)
+--------------------------------------------------------------------------------
+WHAT: Implementing the rest of the UI components (LogitLens, CircuitGraph, Panels)
+WHY: To provide a complete interpretation suite
+
+- LogitLens: Visualizes top token predictions at the final layer using a probability bar chart.
+- CircuitGraph: Uses D3 force simulation to cluster detected induction heads and other circuits.
+- AblationPanel: Provides a grid interface to toggle specific attention heads (simulation logic prepared).
+- ExplanationPanel: Educational sidebar explaining the concepts to non-technical users.
+
+================================================================================
+
+2026-01-22 17:00 - STEP 13: STYLING & UX (App.css)
+--------------------------------------------------------------------------------
+WHAT: Clean, minimal CSS for the application
+WHY: Good UX makes complex tools accessible
+
+DESIGN:
+- Dark theme (#1a1a2e) for comfortable long-term use.
+- Sidebar-Main-Sidebar layout for balanced information density.
+- Interactive elements (buttons, toggles) have clear hover states.
+
+================================================================================
+
+2026-01-22 17:30 - STEP 15: FINAL ASSEMBLY & TESTING
+--------------------------------------------------------------------------------
+WHAT: Assembling App.tsx and verifying typical user flow.
+
+TEST FLOW VERIFICATION:
+1. App Header shows status.
+2. ModelLoader allows selecting "DistilGPT-2".
+3. PromptInput accepts text.
+4. Run triggers `useTransformers` -> `pipeline` -> `circuitDetection`.
+5. Results populate AttentionViz, LogitLens, and CircuitGraph.
+
+BUILD COMPLETE - 2026-01-22 17:45
+================================================================================

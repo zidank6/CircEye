@@ -1,0 +1,309 @@
+:root {
+  --bg-dark: #1a1a2e;
+  --bg-panel: #16213e;
+  --primary: #0f3460;
+  --accent: #e94560;
+  --text-main: #e0e0e0;
+  --text-dim: #a0a0a0;
+  --border: #333;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-header {
+  padding: 1rem;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.status-online {
+  color: #4cd137;
+  font-size: 0.9rem;
+}
+
+.status-offline {
+  color: #7f8fa6;
+  font-size: 0.9rem;
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar-left, .sidebar-right {
+  background: #111;
+  padding: 1rem;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-right {
+  border-left: 1px solid var(--border);
+  border-right: none;
+}
+
+.viz-center {
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Common Components */
+button {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: opacity 0.2s;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input, select, textarea {
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  color: white;
+  padding: 0.5rem;
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Model Loader */
+.model-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.model-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  background: var(--bg-panel);
+  margin-bottom: 0.5rem;
+  text-align: left;
+}
+
+.model-btn-name {
+  font-weight: bold;
+}
+
+.model-btn-desc {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.loading-bar {
+  height: 20px;
+  background: #333;
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.loading-progress {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.loading-bar span {
+  position: absolute;
+  width: 100%;
+  text-align: center;
+  line-height: 20px;
+  font-size: 0.8rem;
+  color: white;
+  text-shadow: 0 1px 2px black;
+}
+
+/* Prompt Input */
+.prompt-input {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.prompt-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.prompt-settings {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.prompt-settings label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+/* Attention Viz */
+.viz-container {
+  background: white; /* Heatmap needs light bg usually, or handled by SVG */
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  justify-content: center;
+}
+
+.viz-controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.viz-tooltip {
+  position: absolute;
+  background: rgba(0,0,0,0.8);
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+
+/* Circuit Graph */
+.circuit-graph {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* Logit Lens */
+.lens-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.lens-layer h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.lens-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lens-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.lens-token {
+  width: 60px;
+  text-align: right;
+  font-family: monospace;
+}
+
+.lens-bar-container {
+  flex: 1;
+  background: #333;
+  height: 16px;
+  border-radius: 2px;
+}
+
+.lens-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.lens-prob {
+  width: 40px;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* Ablation Panel */
+.ablation-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 1rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.ablation-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.row-label {
+  font-size: 0.7rem;
+  width: 20px;
+}
+
+.head-toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 0.6rem;
+  background: #333;
+}
+
+.head-toggle.ablated {
+  background: var(--accent);
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 1rem 0;
+}
