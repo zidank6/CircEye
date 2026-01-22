@@ -74,8 +74,9 @@ export function AttentionViz({
 
         // Draw heatmap cells
         for (let i = 0; i < seqLen; i++) {
+            if (!matrix[i]) continue;
             for (let j = 0; j < seqLen; j++) {
-                const value = matrix[i][j];
+                const value = matrix[i]?.[j] ?? 0;
                 g.append('rect')
                     .attr('x', j * cellSize)
                     .attr('y', i * cellSize)

@@ -7,10 +7,14 @@ export function detectCircuits(
 ): CircuitInfo[] {
     const circuits: CircuitInfo[] = [];
 
-    if (!attentions.length || !tokens.length) return circuits;
+    if (!attentions || !attentions.length || !tokens || !tokens.length) return circuits;
 
     const numLayers = attentions.length;
     const numHeads = attentions[0]?.length || 0;
+
+    if (numHeads === 0) return circuits;
+
+    console.log(`Circuit detection: ${numLayers} layers, ${numHeads} heads, ${tokens.length} tokens`);
 
     for (let layer = 0; layer < numLayers; layer++) {
         for (let head = 0; head < numHeads; head++) {
@@ -69,7 +73,9 @@ function detectPreviousTokenHead(attnMatrix: number[][]): number {
 
     // Sum attention on the -1 diagonal (previous token)
     for (let i = 1; i < seqLen; i++) {
-        diagSum += attnMatrix[i][i - 1];
+        const row = attnMatrix[i];
+        if (!row || row[i - 1] === undefined) continue;
+        diagSum += row[i - 1];
         count++;
     }
 
@@ -78,7 +84,7 @@ function detectPreviousTokenHead(attnMatrix: number[][]): number {
 
 // Detect induction heads via pattern matching
 function detectInductionHead(attnMatrix: number[][], tokens: string[]): number {
-    const seqLen = tokens.length;
+    const seqLen = Math.min(tokens.length, attnMatrix.length);
     if (seqLen < 4) return 0;
 
     let inductionScore = 0;
@@ -86,12 +92,15 @@ function detectInductionHead(attnMatrix: number[][], tokens: string[]): number {
 
     // Look for [A][B]...[A] pattern where position after second A attends to B
     for (let i = 2; i < seqLen; i++) {
+        const row = attnMatrix[i];
+        if (!row) continue;
+
         for (let j = 0; j < i - 1; j++) {
             // Check if tokens match
-            if (tokens[i].toLowerCase() === tokens[j].toLowerCase()) {
+            if (tokens[i]?.toLowerCase() === tokens[j]?.toLowerCase()) {
                 // Position after current should attend to position after match
-                if (i + 1 < seqLen && j + 1 < i) {
-                    inductionScore += attnMatrix[i][j + 1];
+                if (i + 1 < seqLen && j + 1 < i && row[j + 1] !== undefined) {
+                    inductionScore += row[j + 1];
                     pairs++;
                 }
             }
@@ -103,16 +112,19 @@ function detectInductionHead(attnMatrix: number[][], tokens: string[]): number {
 
 // Detect heads that attend to duplicate tokens
 function detectDuplicateTokenHead(attnMatrix: number[][], tokens: string[]): number {
-    const seqLen = tokens.length;
+    const seqLen = Math.min(tokens.length, attnMatrix.length);
     if (seqLen < 2) return 0;
 
     let dupScore = 0;
     let pairs = 0;
 
     for (let i = 1; i < seqLen; i++) {
+        const row = attnMatrix[i];
+        if (!row) continue;
+
         for (let j = 0; j < i; j++) {
-            if (tokens[i].toLowerCase() === tokens[j].toLowerCase()) {
-                dupScore += attnMatrix[i][j];
+            if (tokens[i]?.toLowerCase() === tokens[j]?.toLowerCase() && row[j] !== undefined) {
+                dupScore += row[j];
                 pairs++;
             }
         }

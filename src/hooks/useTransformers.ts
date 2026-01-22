@@ -382,7 +382,23 @@ function extractAttentionFromKV(modelOutput: any, seqLen: number): number[][][][
             }
 
             // dims typically: [batch, num_heads, seq_len, head_dim]
+            // But can vary - log and handle gracefully
+            console.log(`KV layer ${layerIdx} dims:`, dims);
+
+            if (dims.length < 4) {
+                console.warn(`Unexpected dims length: ${dims.length}, skipping layer`);
+                layerIdx++;
+                continue;
+            }
+
             const [_batch, numHeads, tensorSeqLen, headDim] = dims;
+
+            if (!numHeads || !tensorSeqLen || !headDim) {
+                console.warn(`Invalid dims values: heads=${numHeads}, seq=${tensorSeqLen}, dim=${headDim}`);
+                layerIdx++;
+                continue;
+            }
+
             const actualSeqLen = Math.min(seqLen, tensorSeqLen);
 
             const layerAttention: number[][][] = [];
