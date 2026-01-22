@@ -172,6 +172,7 @@ export function useTransformers() {
             // This is critical for research - we need actual attention patterns
             let attentions: number[][][][] = [];
             let attentionSource: AttentionSource = 'synthetic';
+            let modelOutput: any = null;
 
             if (modelRef.current) {
                 try {
@@ -192,7 +193,7 @@ export function useTransformers() {
                     console.log('Calling model with attention_mask and position_ids...');
 
                     // Call model forward pass with all required inputs
-                    const modelOutput = await modelRef.current({
+                    modelOutput = await modelRef.current({
                         input_ids: inputIds,
                         attention_mask: attentionMask,
                         position_ids: positionIds,
@@ -264,11 +265,12 @@ export function useTransformers() {
             // Detect interpretable circuits in attention patterns
             const circuits = detectCircuits(attentions, allTokens);
 
-            // Get top predictions for logit lens visualization
+            // Get top predictions from model logits
+            const numLayersForLens = attentions.length || 6;
             const topPredictions = await getTopPredictions(
-                pipelineRef.current,
+                modelOutput,
                 tokenizer,
-                prompt
+                numLayersForLens
             );
 
             return {
@@ -449,33 +451,98 @@ function extractAttentionFromKV(modelOutput: any, seqLen: number): number[][][][
     }
 }
 
-// Get top predicted tokens for logit lens visualization
+// Get top predicted tokens from model logits
 async function getTopPredictions(
-    _pipe: TextGenPipeline,
-    _tokenizer: any,
-    _prompt: string
+    modelOutput: any,
+    tokenizer: any,
+    numLayers: number
 ): Promise<{ token: string; probability: number }[][]> {
-    // For MVP, return top predictions at final position
-    // Full logit lens would require intermediate layer access
     const predictions: { token: string; probability: number }[][] = [];
 
     try {
-        // Get logits for next token prediction
-        // const tokens = await tokenizer(prompt, { return_tensors: 'pt' });
-
-        // Simulate layerwise predictions (actual implementation needs model hooks)
-        for (let layer = 0; layer < 6; layer++) {
-            const layerPreds: { token: string; probability: number }[] = [];
-            const topTokens = ['the', 'a', 'to', 'and', 'is'];
-
-            for (let i = 0; i < 5; i++) {
-                layerPreds.push({
-                    token: topTokens[i],
-                    probability: Math.random() * (1 - i * 0.15),
-                });
-            }
-            predictions.push(layerPreds.sort((a, b) => b.probability - a.probability));
+        // Get logits from model output - shape: [batch, seq_len, vocab_size]
+        const logits = modelOutput?.logits;
+        if (!logits) {
+            console.warn('No logits in model output');
+            return [];
         }
+
+        // Get logits data
+        let logitsData: Float32Array | number[];
+        if (logits.data) {
+            logitsData = logits.data;
+        } else if (logits.ort_tensor?.cpuData) {
+            logitsData = logits.ort_tensor.cpuData;
+        } else {
+            console.warn('Cannot access logits data');
+            return [];
+        }
+
+        const dims = logits.dims || logits.shape || [];
+        const vocabSize = dims[dims.length - 1] || 50257; // GPT-2 vocab size
+        const seqLen = dims.length > 2 ? dims[1] : 1;
+
+        console.log('Logits dims:', dims, 'vocab:', vocabSize, 'seq:', seqLen);
+
+        // Get logits for the last position (next token prediction)
+        const lastPosStart = (seqLen - 1) * vocabSize;
+        const lastLogits = Array.from(logitsData.slice(lastPosStart, lastPosStart + vocabSize));
+
+        // Compute softmax probabilities
+        const maxLogit = Math.max(...lastLogits);
+        const expLogits = lastLogits.map(l => Math.exp(Number(l) - maxLogit));
+        const sumExp = expLogits.reduce((a, b) => a + b, 0);
+        const probs = expLogits.map(e => e / sumExp);
+
+        // Get top 5 token indices
+        const indexed = probs.map((p, i) => ({ prob: p, idx: i }));
+        indexed.sort((a, b) => b.prob - a.prob);
+        const top5 = indexed.slice(0, 5);
+
+        // Build reverse vocab map for fast lookup
+        let reverseVocab: Map<number, string> | null = null;
+        if (tokenizer.model?.vocab) {
+            reverseVocab = new Map();
+            for (const [token, id] of tokenizer.model.vocab) {
+                reverseVocab.set(Number(id), token);
+            }
+        }
+
+        // Decode token IDs to strings
+        const topPredictions: { token: string; probability: number }[] = [];
+        for (const { prob, idx } of top5) {
+            let tokenStr = `[${idx}]`;
+            try {
+                // Fast vocab lookup
+                if (reverseVocab?.has(idx)) {
+                    tokenStr = reverseVocab.get(idx)!;
+                    // Clean up GPT-2 space markers
+                    tokenStr = tokenStr.replace(/^Ġ/, ' ').replace(/^▁/, ' ');
+                } else {
+                    // Fallback to decode
+                    const decoded = tokenizer.decode([idx], { skip_special_tokens: false });
+                    if (decoded && decoded.length > 0) {
+                        tokenStr = decoded;
+                    }
+                }
+            } catch (e) {
+                console.warn(`Failed to decode token ${idx}:`, e);
+            }
+
+            topPredictions.push({
+                token: tokenStr,
+                probability: prob
+            });
+        }
+
+        // For now, show same predictions for all "layers" since we only have final logits
+        // True logit lens would require intermediate layer hidden states
+        for (let layer = 0; layer < numLayers; layer++) {
+            predictions.push(topPredictions);
+        }
+
+        console.log('Top predictions:', topPredictions);
+
     } catch (e) {
         console.warn('Could not get predictions:', e);
     }

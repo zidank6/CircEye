@@ -94,6 +94,16 @@ function App() {
                                 </div>
                             </div>
 
+                            {/* Show generated output prominently */}
+                            <div className="generated-output">
+                                <h3>Model Output:</h3>
+                                <div className="output-text">{result.output}</div>
+                                <div className="output-note">
+                                    Note: DistilGPT-2 is a small model (82M params). It may not handle complex reasoning well.
+                                    Try simpler patterns like "The cat sat on the mat. The cat sat on the"
+                                </div>
+                            </div>
+
                             <div className="viz-container">
                                 <AttentionViz
                                     attentions={result.attentions}
