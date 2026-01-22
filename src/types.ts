@@ -23,10 +23,14 @@ export interface CircuitInfo {
     explanation: string;
 }
 
+// Source of attention data - critical for research validity
+export type AttentionSource = 'real' | 'kv_derived' | 'synthetic';
+
 export interface InferenceResult {
     output: string;
     tokens: string[];
     attentions: number[][][][]; // [layers, heads, seq, seq]
+    attentionSource: AttentionSource; // Indicates data quality for research
     circuits: CircuitInfo[];
     topPredictions: TokenPrediction[][];
 }

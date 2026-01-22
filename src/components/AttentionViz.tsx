@@ -1,17 +1,37 @@
 import React, { useRef, useEffect, useState } from 'react';
 import * as d3 from 'd3';
-import type { AttentionData } from '../types';
+import type { AttentionSource } from '../types';
 
 interface AttentionVizProps {
     attentions: number[][][][] | null;
+    attentionSource: AttentionSource | null;
     tokens: string[];
     numLayers: number;
     numHeads: number;
     onSvgRef?: (ref: SVGSVGElement | null) => void;
 }
 
+const SOURCE_INFO: Record<AttentionSource, { label: string; color: string; description: string }> = {
+    real: {
+        label: '✓ Real Attention',
+        color: '#4ecdc4',
+        description: 'Extracted directly from model - research grade'
+    },
+    kv_derived: {
+        label: '~ KV-Derived',
+        color: '#ffe66d',
+        description: 'Approximated from K@K^T - shows key similarity patterns'
+    },
+    synthetic: {
+        label: '⚠ Synthetic',
+        color: '#ff6b6b',
+        description: 'Generated for demo - NOT research grade'
+    }
+};
+
 export function AttentionViz({
     attentions,
+    attentionSource,
     tokens,
     numLayers,
     numHeads,
@@ -112,8 +132,22 @@ export function AttentionViz({
         }
     }, [attentions, tokens, selectedLayer, selectedHead, hoveredCell]);
 
+    const sourceInfo = attentionSource ? SOURCE_INFO[attentionSource] : null;
+
     return (
         <div className="attention-viz">
+            {/* Data source indicator - critical for research */}
+            {sourceInfo && (
+                <div
+                    className="attention-source-badge"
+                    style={{ backgroundColor: sourceInfo.color + '20', borderColor: sourceInfo.color }}
+                    title={sourceInfo.description}
+                >
+                    <span style={{ color: sourceInfo.color }}>{sourceInfo.label}</span>
+                    <span className="source-desc">{sourceInfo.description}</span>
+                </div>
+            )}
+
             <div className="viz-controls">
                 <label>
                     Layer:

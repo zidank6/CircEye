@@ -307,3 +307,26 @@ input, select, textarea {
   background: var(--border);
   margin: 1rem 0;
 }
+
+
+/* Attention Source Badge - Research Transparency */
+.attention-source-badge {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border: 1px solid;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+}
+
+.attention-source-badge span:first-child {
+  font-weight: 600;
+}
+
+.attention-source-badge .source-desc {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+

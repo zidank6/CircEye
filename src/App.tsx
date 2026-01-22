@@ -95,6 +95,7 @@ function App() {
                             <div className="viz-container">
                                 <AttentionViz
                                     attentions={result.attentions}
+                                    attentionSource={result.attentionSource}
                                     tokens={result.tokens}
                                     numLayers={modelInfo?.numLayers || 6}
                                     numHeads={modelInfo?.numHeads || 12}

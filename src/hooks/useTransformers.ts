@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { pipeline, env, Tensor } from '@huggingface/transformers';
-import type { ModelInfo, InferenceResult, GenerationConfig } from '../types';
+import type { ModelInfo, InferenceResult, GenerationConfig, AttentionSource } from '../types';
 import { detectCircuits } from '../utils/circuitDetection';
 
 // Configure transformers.js for remote model fetching
@@ -171,6 +171,7 @@ export function useTransformers() {
             // Extract REAL attention weights by calling model directly
             // This is critical for research - we need actual attention patterns
             let attentions: number[][][][] = [];
+            let attentionSource: AttentionSource = 'synthetic';
 
             if (modelRef.current) {
                 try {
@@ -214,16 +215,16 @@ export function useTransformers() {
                                 }
 
                                 const dims = layerAttn.dims || layerAttn.shape || [1, 12, allTokens.length, allTokens.length];
-                                const [_batch, numHeads, seqLen, _seqLen2] = dims;
+                                const [_batch, numHeads, attnSeqLen, _seqLen2] = dims;
                                 const headsData: number[][][] = [];
-                                const headSize = seqLen * seqLen;
+                                const headSize = attnSeqLen * attnSeqLen;
 
                                 for (let h = 0; h < numHeads; h++) {
                                     const headMatrix: number[][] = [];
-                                    for (let i = 0; i < seqLen; i++) {
+                                    for (let i = 0; i < attnSeqLen; i++) {
                                         const row: number[] = [];
-                                        for (let j = 0; j < seqLen; j++) {
-                                            const idx = h * headSize + i * seqLen + j;
+                                        for (let j = 0; j < attnSeqLen; j++) {
+                                            const idx = h * headSize + i * attnSeqLen + j;
                                             row.push(Number(data[idx]) || 0);
                                         }
                                         headMatrix.push(row);
@@ -233,26 +234,31 @@ export function useTransformers() {
                                 return headsData;
                             })
                         );
-                        console.log(`Extracted REAL attention: ${attentions.length} layers`);
+                        attentionSource = 'real';
+                        console.log(`✓ Extracted REAL attention: ${attentions.length} layers`);
                     } else {
                         // Try to compute attention from KV cache
                         console.warn('No attention field - attempting KV cache extraction');
                         const kvAttention = extractAttentionFromKV(modelOutput, seqLen);
                         if (kvAttention) {
                             attentions = kvAttention;
-                            console.log('Computed attention from KV cache');
+                            attentionSource = 'kv_derived';
+                            console.log('✓ Computed attention from KV cache (K@K^T approximation)');
                         } else {
-                            console.warn('Using SYNTHETIC attention - not research grade!');
+                            console.warn('⚠ Using SYNTHETIC attention - not research grade!');
                             attentions = generateSyntheticAttention(allTokens.length, 6, 12);
+                            attentionSource = 'synthetic';
                         }
                     }
                 } catch (attnError) {
                     console.error('Failed to extract attention:', attnError);
                     attentions = generateSyntheticAttention(allTokens.length, 6, 12);
+                    attentionSource = 'synthetic';
                 }
             } else {
                 console.warn('No model reference, using synthetic attention');
                 attentions = generateSyntheticAttention(allTokens.length, 6, 12);
+                attentionSource = 'synthetic';
             }
 
             // Detect interpretable circuits in attention patterns
@@ -269,6 +275,7 @@ export function useTransformers() {
                 output: outputText,
                 tokens: allTokens,
                 attentions,
+                attentionSource,
                 circuits,
                 topPredictions,
             };
@@ -352,6 +359,78 @@ function generateSyntheticAttention(
     }
 
     return attentions;
+}
+
+// Extract attention-like patterns from KV cache
+// This computes K@K^T which shows key similarity - not true attention but informative
+function extractAttentionFromKV(modelOutput: any, seqLen: number): number[][][][] | null {
+    try {
+        const attentions: number[][][][] = [];
+        let layerIdx = 0;
+
+        // Look for present.X.key tensors
+        while (modelOutput[`present.${layerIdx}.key`]) {
+            const keyTensor = modelOutput[`present.${layerIdx}.key`];
+
+            // Get tensor data and dimensions
+            const data = keyTensor.data || keyTensor.ort_tensor?.cpuData;
+            const dims = keyTensor.dims || keyTensor.shape;
+
+            if (!data || !dims) {
+                layerIdx++;
+                continue;
+            }
+
+            // dims typically: [batch, num_heads, seq_len, head_dim]
+            const [_batch, numHeads, tensorSeqLen, headDim] = dims;
+            const actualSeqLen = Math.min(seqLen, tensorSeqLen);
+
+            const layerAttention: number[][][] = [];
+
+            for (let h = 0; h < numHeads; h++) {
+                const headMatrix: number[][] = [];
+
+                // Compute K @ K^T for this head (key similarity matrix)
+                for (let i = 0; i < actualSeqLen; i++) {
+                    const row: number[] = [];
+                    for (let j = 0; j < actualSeqLen; j++) {
+                        // Dot product of key[i] and key[j]
+                        let dotProduct = 0;
+                        for (let d = 0; d < headDim; d++) {
+                            const idx_i = h * tensorSeqLen * headDim + i * headDim + d;
+                            const idx_j = h * tensorSeqLen * headDim + j * headDim + d;
+                            dotProduct += Number(data[idx_i]) * Number(data[idx_j]);
+                        }
+                        // Apply causal mask
+                        if (j > i) {
+                            row.push(0);
+                        } else {
+                            row.push(dotProduct / Math.sqrt(headDim));
+                        }
+                    }
+                    // Softmax normalize the row
+                    const maxVal = Math.max(...row.filter((_, idx) => idx <= i));
+                    const expRow = row.map((v, idx) => idx <= i ? Math.exp(v - maxVal) : 0);
+                    const sumExp = expRow.reduce((a, b) => a + b, 0);
+                    headMatrix.push(expRow.map(v => sumExp > 0 ? v / sumExp : 0));
+                }
+                layerAttention.push(headMatrix);
+            }
+
+            attentions.push(layerAttention);
+            layerIdx++;
+        }
+
+        if (attentions.length > 0) {
+            console.log(`Extracted ${attentions.length} layers from KV cache (K@K^T approximation)`);
+            return attentions;
+        }
+
+        return null;
+    } catch (e) {
+        console.error('KV extraction failed:', e);
+        return null;
+    }
 }
 
 // Get top predicted tokens for logit lens visualization
