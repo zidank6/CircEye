@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { pipeline, env } from '@huggingface/transformers';
+import { pipeline, env, Tensor } from '@huggingface/transformers';
 import type { ModelInfo, InferenceResult, GenerationConfig } from '../types';
 import { detectCircuits } from '../utils/circuitDetection';
 
@@ -7,21 +7,6 @@ import { detectCircuits } from '../utils/circuitDetection';
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
-
-// Debug: Intercept fetch to see what URLs are being requested
-const originalFetch = window.fetch;
-window.fetch = async (...args) => {
-    const url = args[0];
-    console.log('[FETCH]', typeof url === 'string' ? url : (url as Request).url);
-    try {
-        const response = await originalFetch(...args);
-        console.log('[FETCH RESPONSE]', response.status, response.headers.get('content-type'));
-        return response;
-    } catch (e) {
-        console.error('[FETCH ERROR]', e);
-        throw e;
-    }
-};
 
 // Type for the pipeline result
 type TextGenPipeline = Awaited<ReturnType<typeof pipeline<'text-generation'>>>;
@@ -34,6 +19,7 @@ export function useTransformers() {
 
     const pipelineRef = useRef<TextGenPipeline | null>(null);
     const tokenizerRef = useRef<any>(null);
+    const modelRef = useRef<any>(null); // Raw model for attention extraction
 
     // Load model from Hugging Face Hub (cached locally after first download)
     const loadModel = useCallback(async (modelId: string) => {
@@ -69,10 +55,14 @@ export function useTransformers() {
 
             pipelineRef.current = pipe;
             tokenizerRef.current = pipe.tokenizer;
+            modelRef.current = pipe.model; // Access underlying model for attention extraction
 
-            // Model config varies by architecture - use defaults for common models
-            const numLayers = 6; // distilgpt2 default
-            const numHeads = 12;
+            // Try to get actual model config for accurate layer/head counts
+            const config = pipe.model?.config || {};
+            const numLayers = config.n_layer || config.num_hidden_layers || 6;
+            const numHeads = config.n_head || config.num_attention_heads || 12;
+
+            console.log('Model config:', { numLayers, numHeads, config });
 
             setModelInfo({
                 id: modelId,
@@ -106,61 +96,164 @@ export function useTransformers() {
         try {
             const tokenizer = tokenizerRef.current;
 
-            // Tokenize input to get token strings for visualization
-            const encoded = await tokenizer(prompt, { return_tensors: false });
-
-            // In transformers.js v3, input_ids might be BigInt64Array or array of BigInts
-            // We need to convert them to numbers for the decode function if strictly typed, 
-            // but just passing them to decode([id]) should work if id is the correct type.
-            // The error "Cannot convert The to a BigInt" actually looks like something is trying 
-            // to cast the STRING "The" to BigInt. 
-            // This implies `encoded.input_ids` might not be what we expect.
-
-            // Let's coerce to array and safe map
-            const inputIds = Array.from(encoded.input_ids);
-            const inputTokens = inputIds.map((id: any) =>
-                tokenizer.decode([Number(id)])
-            );
-
-            // Generate with attention output enabled
+            // Generate text
             const result = await pipelineRef.current(prompt, {
                 max_new_tokens: config.maxNewTokens,
                 temperature: config.temperature,
                 top_k: config.topK,
                 return_full_text: true,
-                output_attentions: true,
             });
 
             const generated = Array.isArray(result) ? result[0] : result;
             const outputText = generated.generated_text || '';
 
-            // Extract attention weights if available
-            // transformers.js returns attentions as nested arrays
-            let attentions: number[][][][] = [];
-            let allTokens = inputTokens;
+            // Get exact subword tokens from the model's tokenizer
+            // This is critical for research accuracy - attention is computed at subword level
+            const encoded = await tokenizer(outputText);
+            let allTokens: string[] = [];
 
-            // Fix: Access attentions safely checking for existence
-            // @ts-ignore - output structure varies by task
-            if (generated.attentions) {
-                // @ts-ignore
-                attentions = generated.attentions;
-                // @ts-ignore
-            } else if (generated.details?.attentions) {
-                // Some versions might nest it
-                // @ts-ignore
-                attentions = generated.details.attentions;
+            // Access the tokenizer's vocabulary to convert IDs to token strings
+            const inputIds = encoded.input_ids;
+
+            // Get the underlying data as regular numbers
+            let idsArray: bigint[] | number[];
+            if (inputIds.tolist) {
+                idsArray = inputIds.tolist().flat();
+            } else if (inputIds.ort_tensor?.cpuData) {
+                idsArray = Array.from(inputIds.ort_tensor.cpuData);
+            } else if (inputIds.data) {
+                idsArray = Array.from(inputIds.data);
             } else {
-                console.warn('No attention weights found, generating synthetic data');
-                // Generate synthetic attention for demo if not available
-                attentions = generateSyntheticAttention(inputTokens.length, 6, 12);
+                idsArray = Array.from(inputIds);
             }
 
-            // Tokenize full output for display
-            const outputEncoded = await tokenizer(outputText, { return_tensors: false });
-            const outputIds = Array.from(outputEncoded.input_ids);
-            allTokens = outputIds.map((id: any) =>
-                tokenizer.decode([Number(id)])
-            );
+            console.log('Token IDs:', idsArray);
+
+            // Decode tokens one by one using the tokenizer
+            // In transformers.js v3, we need to create proper tensors for decode
+            for (let i = 0; i < idsArray.length; i++) {
+                const id = idsArray[i];
+                try {
+                    // Try different decode approaches
+                    let tokenStr: string;
+
+                    // Method 1: Use decode with array
+                    if (tokenizer.decode_single) {
+                        tokenStr = tokenizer.decode_single(Number(id));
+                    } else {
+                        // Method 2: Decode with the same tensor type as input
+                        const singleId = inputIds.slice([i], [i + 1]);
+                        tokenStr = tokenizer.decode(singleId, { skip_special_tokens: false });
+                    }
+
+                    // Clean up GPT-2 style space marker
+                    tokenStr = tokenStr.replace(/^Ġ/, ' ').replace(/^▁/, ' ');
+                    allTokens.push(tokenStr || `[${id}]`);
+                } catch {
+                    // Fallback: just use the ID
+                    allTokens.push(`[${id}]`);
+                }
+            }
+
+            // If all tokens failed, try batch decode and split
+            if (allTokens.every(t => t.startsWith('['))) {
+                console.warn('Individual decode failed, trying batch approach');
+                const fullText = tokenizer.decode(inputIds, { skip_special_tokens: false });
+                // Split on GPT-2 space markers or whitespace
+                const splits = fullText.split(/(Ġ|▁|\s+)/).filter(Boolean);
+                if (splits.length > 0) {
+                    allTokens = splits.map(s => s.replace(/^Ġ/, ' ').replace(/^▁/, ' '));
+                }
+            }
+
+            console.log('Exact subword tokens:', allTokens);
+
+            // Extract REAL attention weights by calling model directly
+            // This is critical for research - we need actual attention patterns
+            let attentions: number[][][][] = [];
+
+            if (modelRef.current) {
+                try {
+                    console.log('Extracting real attention weights...');
+
+                    // Create attention_mask (all 1s for non-padded input)
+                    const seqLen = idsArray.length;
+                    const attentionMaskData = new BigInt64Array(seqLen).fill(1n);
+                    const attentionMask = new Tensor('int64', attentionMaskData, [1, seqLen]);
+
+                    // Create position_ids (0, 1, 2, ..., seqLen-1)
+                    const positionIdsData = new BigInt64Array(seqLen);
+                    for (let i = 0; i < seqLen; i++) {
+                        positionIdsData[i] = BigInt(i);
+                    }
+                    const positionIds = new Tensor('int64', positionIdsData, [1, seqLen]);
+
+                    console.log('Calling model with attention_mask and position_ids...');
+
+                    // Call model forward pass with all required inputs
+                    const modelOutput = await modelRef.current({
+                        input_ids: inputIds,
+                        attention_mask: attentionMask,
+                        position_ids: positionIds,
+                        output_attentions: true,
+                    });
+
+                    console.log('Model output keys:', Object.keys(modelOutput));
+
+                    if (modelOutput.attentions) {
+                        // Convert attention tensors to nested arrays
+                        attentions = await Promise.all(
+                            modelOutput.attentions.map(async (layerAttn: any) => {
+                                let data: Float32Array | number[];
+                                if (layerAttn.data) {
+                                    data = layerAttn.data;
+                                } else if (layerAttn.ort_tensor?.cpuData) {
+                                    data = layerAttn.ort_tensor.cpuData;
+                                } else {
+                                    data = await layerAttn.tolist();
+                                }
+
+                                const dims = layerAttn.dims || layerAttn.shape || [1, 12, allTokens.length, allTokens.length];
+                                const [_batch, numHeads, seqLen, _seqLen2] = dims;
+                                const headsData: number[][][] = [];
+                                const headSize = seqLen * seqLen;
+
+                                for (let h = 0; h < numHeads; h++) {
+                                    const headMatrix: number[][] = [];
+                                    for (let i = 0; i < seqLen; i++) {
+                                        const row: number[] = [];
+                                        for (let j = 0; j < seqLen; j++) {
+                                            const idx = h * headSize + i * seqLen + j;
+                                            row.push(Number(data[idx]) || 0);
+                                        }
+                                        headMatrix.push(row);
+                                    }
+                                    headsData.push(headMatrix);
+                                }
+                                return headsData;
+                            })
+                        );
+                        console.log(`Extracted REAL attention: ${attentions.length} layers`);
+                    } else {
+                        // Try to compute attention from KV cache
+                        console.warn('No attention field - attempting KV cache extraction');
+                        const kvAttention = extractAttentionFromKV(modelOutput, seqLen);
+                        if (kvAttention) {
+                            attentions = kvAttention;
+                            console.log('Computed attention from KV cache');
+                        } else {
+                            console.warn('Using SYNTHETIC attention - not research grade!');
+                            attentions = generateSyntheticAttention(allTokens.length, 6, 12);
+                        }
+                    }
+                } catch (attnError) {
+                    console.error('Failed to extract attention:', attnError);
+                    attentions = generateSyntheticAttention(allTokens.length, 6, 12);
+                }
+            } else {
+                console.warn('No model reference, using synthetic attention');
+                attentions = generateSyntheticAttention(allTokens.length, 6, 12);
+            }
 
             // Detect interpretable circuits in attention patterns
             const circuits = detectCircuits(attentions, allTokens);
@@ -191,6 +284,7 @@ export function useTransformers() {
     const unloadModel = useCallback(() => {
         pipelineRef.current = null;
         tokenizerRef.current = null;
+        modelRef.current = null;
         setModelInfo(null);
         setLoadProgress(0);
     }, []);
