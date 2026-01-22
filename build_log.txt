@@ -155,3 +155,13 @@ TEST FLOW VERIFICATION:
 
 BUILD COMPLETE - 2026-01-22 17:45
 ================================================================================
+
+2026-01-22 17:55 - STEP 16: FIXING TAURI CONFIGURATION
+--------------------------------------------------------------------------------
+WHAT: Moving `bundle` configuration to root level in `tauri.conf.json`.
+WHY: Tauri v2 schema compliance. `bundle` is no longer nested under `app`.
+
+2026-01-22 18:00 - STEP 17: ENVIRONMENT CHECK FAILED
+--------------------------------------------------------------------------------
+ERROR: Rust/Cargo not found in system PATH.
+ACTION: User must install Rust to proceed with Tauri development.

@@ -1,0 +1,18 @@
+# Node
+node_modules
+dist
+
+# Rust / Tauri
+src-tauri/target
+
+# OS
+.DS_Store
+
+# Editor
+.vscode
+.idea
+
+# AI Generation Artifacts
+build_log.txt
+generate_icon.py
+app-icon.png

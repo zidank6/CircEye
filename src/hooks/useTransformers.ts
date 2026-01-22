@@ -4,8 +4,13 @@ import type { ModelInfo, InferenceResult, GenerationConfig } from '../types';
 import { detectCircuits } from '../utils/circuitDetection';
 
 // Configure transformers.js for local-first usage
-env.allowLocalModels = true;
-env.useBrowserCache = true;
+env.allowLocalModels = false;
+env.allowRemoteModels = true;
+// @ts-ignore - backends may be optional in type definition
+if (env.backends?.onnx?.wasm) {
+    // @ts-ignore
+    env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/';
+}
 
 export function useTransformers() {
     const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
@@ -99,9 +104,18 @@ export function useTransformers() {
             let attentions: number[][][][] = [];
             let allTokens = inputTokens;
 
+            // Fix: Access attentions safely checking for existence
+            // @ts-ignore - output structure varies by task
             if (generated.attentions) {
+                // @ts-ignore
                 attentions = generated.attentions;
+                // @ts-ignore
+            } else if (generated.details?.attentions) {
+                // Some versions might nest it
+                // @ts-ignore
+                attentions = generated.details.attentions;
             } else {
+                console.warn('No attention weights found, generating synthetic data');
                 // Generate synthetic attention for demo if not available
                 attentions = generateSyntheticAttention(inputTokens.length, 6, 12);
             }
