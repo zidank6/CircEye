@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import type { CircuitInfo } from '../types';
 import { getCircuitTypeName } from '../utils/circuitDetection';
@@ -30,7 +30,7 @@ export function CircuitGraph({ circuits }: CircuitGraphProps) {
         const simulation = d3.forceSimulation(nodes as any)
             .force('charge', d3.forceManyBody().strength(-20))
             .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('y', d3.forceY().y(d => d.layer * 30).strength(0.5)) // Layer separation
+            .force('y', d3.forceY().y((d: any) => d.layer * 30).strength(0.5)) // Layer separation
             .on('tick', ticked);
 
         const g = svg.append('g');

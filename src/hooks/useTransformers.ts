@@ -58,7 +58,7 @@ export function useTransformers() {
             modelRef.current = pipe.model; // Access underlying model for attention extraction
 
             // Try to get actual model config for accurate layer/head counts
-            const config = pipe.model?.config || {};
+            const config: any = pipe.model?.config || {};
             const numLayers = config.n_layer || config.num_hidden_layers || 6;
             const numHeads = config.n_head || config.num_attention_heads || 12;
 
@@ -104,7 +104,7 @@ export function useTransformers() {
                 return_full_text: true,
             });
 
-            const generated = Array.isArray(result) ? result[0] : result;
+            const generated: any = Array.isArray(result) ? result[0] : result;
             const outputText = generated.generated_text || '';
 
             // Get exact subword tokens from the model's tokenizer
@@ -116,15 +116,15 @@ export function useTransformers() {
             const inputIds = encoded.input_ids;
 
             // Get the underlying data as regular numbers
-            let idsArray: bigint[] | number[];
+            let idsArray: (bigint | number)[];
             if (inputIds.tolist) {
                 idsArray = inputIds.tolist().flat();
-            } else if (inputIds.ort_tensor?.cpuData) {
-                idsArray = Array.from(inputIds.ort_tensor.cpuData);
-            } else if (inputIds.data) {
-                idsArray = Array.from(inputIds.data);
+            } else if ((inputIds as any).ort_tensor?.cpuData) {
+                idsArray = Array.from((inputIds as any).ort_tensor.cpuData);
+            } else if ((inputIds as any).data) {
+                idsArray = Array.from((inputIds as any).data);
             } else {
-                idsArray = Array.from(inputIds);
+                idsArray = Array.from(inputIds as any);
             }
 
             console.log('Token IDs:', idsArray);
@@ -162,7 +162,7 @@ export function useTransformers() {
                 // Split on GPT-2 space markers or whitespace
                 const splits = fullText.split(/(Ġ|▁|\s+)/).filter(Boolean);
                 if (splits.length > 0) {
-                    allTokens = splits.map(s => s.replace(/^Ġ/, ' ').replace(/^▁/, ' '));
+                    allTokens = splits.map((s: string) => s.replace(/^Ġ/, ' ').replace(/^▁/, ' '));
                 }
             }
 

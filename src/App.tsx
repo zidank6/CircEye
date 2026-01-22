@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ModelLoader } from './components/ModelLoader';
 import { PromptInput } from './components/PromptInput';
 import { AttentionViz } from './components/AttentionViz';
 import { LogitLens } from './components/LogitLens';
 import { CircuitGraph } from './components/CircuitGraph';
 import { AblationPanel } from './components/AblationPanel';
+import { AblationComparison } from './components/AblationComparison';
+import { CircuitInsights } from './components/CircuitInsights';
 import { ExplanationPanel } from './components/ExplanationPanel';
 import { useTransformers } from './hooks/useTransformers';
+import { useAblation } from './hooks/useAblation';
 import { exportAsPng, exportAsSvg } from './utils/exportViz';
 import type { GenerationConfig, InferenceResult } from './types';
+import type { DetectedCircuit } from './utils/circuitDetection';
+import type { AblationMask } from './hooks/useAblation';
 
 function App() {
     const {
@@ -21,11 +26,19 @@ function App() {
         unloadModel
     } = useTransformers();
 
+    const {
+        ablationResult,
+        isComparing,
+        runAblation,
+        clearAblation
+    } = useAblation();
+
     const [result, setResult] = useState<InferenceResult | null>(null);
     const [svgElement, setSvgElement] = useState<SVGSVGElement | null>(null);
     const [selectedPrompt, setSelectedPrompt] = useState<string | undefined>(undefined);
 
     const handleRun = async (prompt: string, config: GenerationConfig) => {
+        clearAblation(); // Clear any previous ablation when running new inference
         const res = await runInference(prompt, config);
         setResult(res);
     };
@@ -38,6 +51,26 @@ function App() {
             await exportAsSvg(svgElement);
         }
     };
+
+    const handleAblation = (mask: AblationMask[]) => {
+        if (result?.attentions) {
+            runAblation(result.attentions, mask);
+        }
+    };
+
+    const handleAblateCircuit = (circuit: DetectedCircuit) => {
+        if (result?.attentions) {
+            runAblation(result.attentions, [{ layer: circuit.layer, head: circuit.head }]);
+        }
+    };
+
+    // Cast circuits to DetectedCircuit (they have the extended properties from detection)
+    const detectedCircuits = (result?.circuits || []) as DetectedCircuit[];
+
+    // Use ablated attentions if available, otherwise original
+    const displayAttentions = isComparing && ablationResult?.ablatedAttentions
+        ? ablationResult.ablatedAttentions
+        : result?.attentions || null;
 
     return (
         <div className="app-container">
@@ -77,7 +110,9 @@ function App() {
                             <AblationPanel
                                 numLayers={modelInfo.numLayers}
                                 numHeads={modelInfo.numHeads}
-                                onAblate={(mask) => console.log('Ablation simulation only requires re-run logic', mask)}
+                                detectedCircuits={detectedCircuits}
+                                onAblate={handleAblation}
+                                onClear={clearAblation}
                             />
                         </>
                     )}
@@ -87,12 +122,23 @@ function App() {
                     {result ? (
                         <>
                             <div className="viz-header">
-                                <h2>Attention Patterns</h2>
+                                <h2>
+                                    Attention Patterns
+                                    {isComparing && <span className="ablation-badge">ABLATED VIEW</span>}
+                                </h2>
                                 <div className="export-controls">
                                     <button onClick={() => handleExport('png')}>Export PNG</button>
                                     <button onClick={() => handleExport('svg')}>Export SVG</button>
                                 </div>
                             </div>
+
+                            {/* Show ablation comparison if active */}
+                            {isComparing && ablationResult && (
+                                <AblationComparison
+                                    result={ablationResult}
+                                    onClose={clearAblation}
+                                />
+                            )}
 
                             {/* Show generated output prominently */}
                             <div className="generated-output">
@@ -106,8 +152,8 @@ function App() {
 
                             <div className="viz-container">
                                 <AttentionViz
-                                    attentions={result.attentions}
-                                    attentionSource={result.attentionSource}
+                                    attentions={displayAttentions}
+                                    attentionSource={isComparing ? 'synthetic' : result.attentionSource}
                                     tokens={result.tokens}
                                     numLayers={modelInfo?.numLayers || 6}
                                     numHeads={modelInfo?.numHeads || 12}
@@ -128,7 +174,14 @@ function App() {
 
                 <aside className="sidebar-right">
                     {result && (
-                        <CircuitGraph circuits={result.circuits} />
+                        <>
+                            <CircuitInsights
+                                circuits={detectedCircuits}
+                                onAblateCircuit={handleAblateCircuit}
+                            />
+                            <div className="divider" />
+                            <CircuitGraph circuits={result.circuits} />
+                        </>
                     )}
                     <ExplanationPanel
                         circuits={result?.circuits || []}

@@ -435,3 +435,372 @@ input, select, textarea {
   font-style: italic;
 }
 
+/* Ablation Badge */
+.ablation-badge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 8px;
+  background: #e74c3c;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: bold;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+/* Updated Ablation Panel */
+.ablation-panel h3 {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+}
+
+.ablation-panel .hint {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin: 0 0 12px 0;
+}
+
+.quick-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+
+.quick-label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.quick-btn {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  text-transform: capitalize;
+}
+
+.quick-btn:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.grid-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.layer-label {
+  font-size: 0.65rem;
+  width: 24px;
+  color: var(--text-dim);
+}
+
+.head-label {
+  font-size: 0.6rem;
+  width: 20px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.head-toggle {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 0.6rem;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 3px;
+}
+
+.head-toggle:hover {
+  background: #3a3a3a;
+}
+
+.head-toggle.selected {
+  background: #e74c3c;
+  border-color: #e74c3c;
+}
+
+.head-toggle.has-circuit {
+  border-color: var(--circuit-color, #4ecdc4);
+  border-width: 2px;
+}
+
+.circuit-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.grid-note {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin: 8px 0;
+}
+
+.ablation-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  flex: 1;
+}
+
+.btn-secondary {
+  background: #333;
+  border: 1px solid #444;
+}
+
+/* Circuit Insights */
+.circuit-insights {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.circuit-insights h3 {
+  margin: 0 0 12px 0;
+  font-size: 1rem;
+}
+
+.no-circuits {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.circuit-type-group {
+  margin-bottom: 12px;
+}
+
+.circuit-type-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.05);
+  border-left: 3px solid;
+  border-radius: 0 4px 4px 0;
+  margin-bottom: 8px;
+}
+
+.type-name {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.type-count {
+  background: rgba(255,255,255,0.1);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+}
+
+.circuit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.circuit-item {
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.circuit-item:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.circuit-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.circuit-location {
+  font-family: monospace;
+  font-weight: bold;
+  color: #fff;
+}
+
+.confidence-badge {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.circuit-score {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.circuit-evidence {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.ablate-btn {
+  margin-top: 8px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  background: rgba(231, 76, 60, 0.2);
+  border: 1px solid rgba(231, 76, 60, 0.5);
+  color: #e74c3c;
+}
+
+.ablate-btn:hover {
+  background: rgba(231, 76, 60, 0.3);
+}
+
+.more-circuits {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 4px;
+}
+
+/* Ablation Comparison */
+.ablation-comparison {
+  background: linear-gradient(135deg, rgba(231, 76, 60, 0.1) 0%, rgba(0,0,0,0.2) 100%);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.ablation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.ablation-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #e74c3c;
+}
+
+.close-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 50%;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-dim);
+}
+
+.close-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+
+.ablated-heads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.ablated-heads .label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.head-tag {
+  padding: 2px 8px;
+  background: rgba(231, 76, 60, 0.2);
+  border: 1px solid rgba(231, 76, 60, 0.4);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #e74c3c;
+}
+
+.impact-indicator {
+  padding: 12px;
+  border: 1px solid;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.impact-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.impact-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.impact-score {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.impact-description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.impact-bar-container {
+  margin-bottom: 12px;
+}
+
+.impact-bar-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.impact-bar-bg {
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.impact-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.ablation-note {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  padding: 8px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+}
+
+.ablation-note strong {
+  color: #f39c12;
+}
+
