@@ -1,16 +1,15 @@
 import { useState, useCallback, useRef } from 'react';
-import { pipeline, env, TextGenerationPipeline } from '@huggingface/transformers';
+import { pipeline, env } from '@huggingface/transformers';
 import type { ModelInfo, InferenceResult, GenerationConfig } from '../types';
 import { detectCircuits } from '../utils/circuitDetection';
 
-// Configure transformers.js for local-first usage
+// Configure transformers.js for remote model fetching
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
-// @ts-ignore - backends may be optional in type definition
-if (env.backends?.onnx?.wasm) {
-    // @ts-ignore
-    env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/';
-}
+env.useBrowserCache = true;
+
+// Type for the pipeline result
+type TextGenPipeline = Awaited<ReturnType<typeof pipeline<'text-generation'>>>;
 
 export function useTransformers() {
     const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
@@ -18,7 +17,7 @@ export function useTransformers() {
     const [loadProgress, setLoadProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
 
-    const pipelineRef = useRef<TextGenerationPipeline | null>(null);
+    const pipelineRef = useRef<TextGenPipeline | null>(null);
     const tokenizerRef = useRef<any>(null);
 
     // Load model from Hugging Face Hub (cached locally after first download)
@@ -28,17 +27,27 @@ export function useTransformers() {
         setLoadProgress(0);
 
         try {
-            // Check for WebGPU support for faster inference
-            // @ts-ignore - navigator.gpu is standard but might miss types
-            const device = navigator.gpu ? 'webgpu' : 'wasm';
+            console.log('Loading model:', modelId);
+            console.log('Env settings:', {
+                allowLocal: env.allowLocalModels,
+                allowRemote: env.allowRemoteModels,
+            });
+
+            // Use WASM backend for broader compatibility
+            // WebGPU can be enabled later if available and stable
+            const device = 'wasm';
             console.log(`Using device: ${device}`);
 
             // Create text generation pipeline with progress tracking
             const pipe = await pipeline('text-generation', modelId, {
                 device,
+                dtype: 'fp32',
                 progress_callback: (progress: any) => {
-                    if (progress.status === 'progress') {
+                    console.log('Progress:', progress);
+                    if (progress.status === 'progress' && progress.progress !== undefined) {
                         setLoadProgress(Math.round(progress.progress));
+                    } else if (progress.status === 'ready') {
+                        setLoadProgress(100);
                     }
                 },
             });
@@ -159,6 +168,20 @@ export function useTransformers() {
         setLoadProgress(0);
     }, []);
 
+    const clearCache = useCallback(async () => {
+        try {
+            // @ts-ignore - env.cache is part of transformers.js internals
+            if (env.cache) {
+                console.log('Clearing transformers cache...');
+                // @ts-ignore
+                await env.cache.clear();
+                console.log('Cache cleared');
+            }
+        } catch (e) {
+            console.error('Failed to clear cache:', e);
+        }
+    }, []);
+
     return {
         modelInfo,
         isLoading,
@@ -167,6 +190,7 @@ export function useTransformers() {
         loadModel,
         runInference,
         unloadModel,
+        clearCache
     };
 }
 
@@ -211,9 +235,9 @@ function generateSyntheticAttention(
 
 // Get top predicted tokens for logit lens visualization
 async function getTopPredictions(
-    pipe: TextGenerationPipeline,
-    tokenizer: any,
-    prompt: string
+    _pipe: TextGenPipeline,
+    _tokenizer: any,
+    _prompt: string
 ): Promise<{ token: string; probability: number }[][]> {
     // For MVP, return top predictions at final position
     // Full logit lens would require intermediate layer access

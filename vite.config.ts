@@ -13,22 +13,26 @@ export default defineConfig({
     strictPort: true,
     // Allow connections from Tauri
     host: true,
+    // Headers for WASM and cross-origin isolation
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    },
   },
 
-  // For transformers.js WASM support
+  // For transformers.js WASM support - don't pre-bundle
   optimizeDeps: {
     exclude: ['@huggingface/transformers'],
   },
 
   build: {
-    // Target modern browsers for WebGPU support
+    // Target modern browsers
     target: 'esnext',
-    // Tauri uses Chromium, safe to use modern features
     minify: 'esbuild',
   },
 
   // Handle WASM files
-  assetsInclude: ['**/*.wasm'],
+  assetsInclude: ['**/*.wasm', '**/*.onnx'],
 
   // Worker configuration for transformers.js
   worker: {
