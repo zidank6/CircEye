@@ -118,14 +118,12 @@ function App() {
 
                 <aside className="sidebar-right">
                     {result && (
-                        <>
-                            <CircuitGraph circuits={result.circuits} />
-                            <ExplanationPanel
-                                circuits={result.circuits}
-                                onPromptSelect={setSelectedPrompt}
-                            />
-                        </>
+                        <CircuitGraph circuits={result.circuits} />
                     )}
+                    <ExplanationPanel
+                        circuits={result?.circuits || []}
+                        onPromptSelect={setSelectedPrompt}
+                    />
                 </aside>
             </main>
         </div>
