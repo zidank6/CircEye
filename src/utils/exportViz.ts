@@ -1,23 +1,45 @@
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
+// Check if running in Tauri environment
+const isTauri = () => {
+    return typeof window !== 'undefined' && '__TAURI__' in window;
+};
+
+// Browser-based download fallback
+function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 // Export SVG element as file
 export async function exportAsSvg(svgElement: SVGSVGElement): Promise<boolean> {
     try {
         const serializer = new XMLSerializer();
         const svgString = serializer.serializeToString(svgElement);
-
-        // Add XML declaration and proper namespace
         const fullSvg = `<?xml version="1.0" encoding="UTF-8"?>\n${svgString}`;
 
-        const path = await save({
-            filters: [{ name: 'SVG', extensions: ['svg'] }],
-            defaultPath: 'attention-visualization.svg',
-        });
+        if (isTauri()) {
+            // Use Tauri APIs
+            const { save } = await import('@tauri-apps/plugin-dialog');
+            const { writeFile } = await import('@tauri-apps/plugin-fs');
 
-        if (!path) return false;
+            const path = await save({
+                filters: [{ name: 'SVG', extensions: ['svg'] }],
+                defaultPath: 'attention-visualization.svg',
+            });
 
-        await writeFile(path, new TextEncoder().encode(fullSvg));
+            if (!path) return false;
+            await writeFile(path, new TextEncoder().encode(fullSvg));
+        } else {
+            // Browser fallback
+            const blob = new Blob([fullSvg], { type: 'image/svg+xml' });
+            downloadBlob(blob, 'attention-visualization.svg');
+        }
+
         return true;
     } catch (e) {
         console.error('SVG export failed:', e);
@@ -33,7 +55,12 @@ export async function exportAsPng(
 ): Promise<boolean> {
     try {
         const serializer = new XMLSerializer();
-        const svgString = serializer.serializeToString(svgElement);
+        let svgString = serializer.serializeToString(svgElement);
+
+        // Ensure SVG has proper dimensions and namespace for rendering
+        if (!svgString.includes('xmlns=')) {
+            svgString = svgString.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+        }
 
         // Create canvas for PNG conversion
         const canvas = document.createElement('canvas');
@@ -45,17 +72,20 @@ export async function exportAsPng(
 
         // Create image from SVG
         const img = new Image();
-        const blob = new Blob([svgString], { type: 'image/svg+xml' });
+        const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(blob);
 
         await new Promise<void>((resolve, reject) => {
             img.onload = () => resolve();
-            img.onerror = reject;
+            img.onerror = (e) => {
+                console.error('Image load error:', e);
+                reject(new Error('Failed to load SVG as image'));
+            };
             img.src = url;
         });
 
         // Draw to canvas
-        ctx.fillStyle = '#1a1a2e';
+        ctx.fillStyle = '#0d1117';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
 
@@ -68,15 +98,24 @@ export async function exportAsPng(
 
         if (!pngBlob) throw new Error('PNG conversion failed');
 
-        const path = await save({
-            filters: [{ name: 'PNG', extensions: ['png'] }],
-            defaultPath: 'attention-visualization.png',
-        });
+        if (isTauri()) {
+            // Use Tauri APIs
+            const { save } = await import('@tauri-apps/plugin-dialog');
+            const { writeFile } = await import('@tauri-apps/plugin-fs');
 
-        if (!path) return false;
+            const path = await save({
+                filters: [{ name: 'PNG', extensions: ['png'] }],
+                defaultPath: 'attention-visualization.png',
+            });
 
-        const arrayBuffer = await pngBlob.arrayBuffer();
-        await writeFile(path, new Uint8Array(arrayBuffer));
+            if (!path) return false;
+
+            const arrayBuffer = await pngBlob.arrayBuffer();
+            await writeFile(path, new Uint8Array(arrayBuffer));
+        } else {
+            // Browser fallback
+            downloadBlob(pngBlob, 'attention-visualization.png');
+        }
 
         return true;
     } catch (e) {

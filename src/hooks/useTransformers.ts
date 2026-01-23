@@ -241,11 +241,12 @@ export function useTransformers() {
                     } else {
                         // Try to compute attention from KV cache
                         console.warn('No attention field - attempting KV cache extraction');
-                        const kvAttention = extractAttentionFromKV(modelOutput, seqLen);
-                        if (kvAttention) {
-                            attentions = kvAttention;
-                            attentionSource = 'kv_derived';
-                            console.log('✓ Computed attention from KV cache (K@K^T approximation)');
+                        const kvResult = extractAttentionFromKV(modelOutput, seqLen);
+                        if (kvResult) {
+                            attentions = kvResult.attentions;
+                            // Use 'real' if we computed Q@K^T, 'kv_derived' for K@K^T approximation
+                            attentionSource = kvResult.isQKT ? 'real' : 'kv_derived';
+                            console.log(`✓ Computed attention from KV cache (${kvResult.isQKT ? 'Q@K^T' : 'K@K^T'})`);
                         } else {
                             console.warn('⚠ Using SYNTHETIC attention - not research grade!');
                             attentions = generateSyntheticAttention(allTokens.length, 6, 12);
@@ -390,36 +391,42 @@ function generateSyntheticAttention(
 }
 
 // Extract attention-like patterns from KV cache
-// This computes K@K^T which shows key similarity - not true attention but informative
-function extractAttentionFromKV(modelOutput: any, seqLen: number): number[][][][] | null {
+// Tries Q@K^T first (accurate), falls back to K@K^T (key similarity approximation)
+function extractAttentionFromKV(modelOutput: any, seqLen: number): { attentions: number[][][][]; isQKT: boolean } | null {
     try {
+        // Log available keys for debugging
+        const keys = Object.keys(modelOutput);
+        const kvKeys = keys.filter(k => k.includes('present') || k.includes('key') || k.includes('query') || k.includes('value'));
+        console.log('Model output keys for KV extraction:', kvKeys);
+
         const attentions: number[][][][] = [];
         let layerIdx = 0;
+        let usedQKT = false;
 
         // Look for present.X.key tensors
         while (modelOutput[`present.${layerIdx}.key`]) {
             const keyTensor = modelOutput[`present.${layerIdx}.key`];
+            const queryTensor = modelOutput[`present.${layerIdx}.query`];
 
-            // Get tensor data and dimensions
-            const data = keyTensor.data || keyTensor.ort_tensor?.cpuData;
-            const dims = keyTensor.dims || keyTensor.shape;
+            // Get key tensor data and dimensions
+            const keyData = keyTensor.data || keyTensor.ort_tensor?.cpuData;
+            const keyDims = keyTensor.dims || keyTensor.shape;
 
-            if (!data || !dims) {
+            if (!keyData || !keyDims) {
                 layerIdx++;
                 continue;
             }
 
             // dims typically: [batch, num_heads, seq_len, head_dim]
-            // But can vary - log and handle gracefully
-            console.log(`KV layer ${layerIdx} dims:`, dims);
+            console.log(`KV layer ${layerIdx} key dims:`, keyDims);
 
-            if (dims.length < 4) {
-                console.warn(`Unexpected dims length: ${dims.length}, skipping layer`);
+            if (keyDims.length < 4) {
+                console.warn(`Unexpected dims length: ${keyDims.length}, skipping layer`);
                 layerIdx++;
                 continue;
             }
 
-            const [_batch, numHeads, tensorSeqLen, headDim] = dims;
+            const [_batch, numHeads, tensorSeqLen, headDim] = keyDims;
 
             if (!numHeads || !tensorSeqLen || !headDim) {
                 console.warn(`Invalid dims values: heads=${numHeads}, seq=${tensorSeqLen}, dim=${headDim}`);
@@ -429,23 +436,42 @@ function extractAttentionFromKV(modelOutput: any, seqLen: number): number[][][][
 
             const actualSeqLen = Math.min(seqLen, tensorSeqLen);
 
+            // Check if we have query tensor for real Q@K^T computation
+            const queryData = queryTensor?.data || queryTensor?.ort_tensor?.cpuData;
+            const hasQuery = queryData && queryData.length > 0;
+
+            if (hasQuery && layerIdx === 0) {
+                console.log(`✓ Query tensors available - using Q@K^T (real attention formula)`);
+                usedQKT = true;
+            }
+
             const layerAttention: number[][][] = [];
 
             for (let h = 0; h < numHeads; h++) {
                 const headMatrix: number[][] = [];
 
-                // Compute K @ K^T for this head (key similarity matrix)
                 for (let i = 0; i < actualSeqLen; i++) {
                     const row: number[] = [];
                     for (let j = 0; j < actualSeqLen; j++) {
-                        // Dot product of key[i] and key[j]
                         let dotProduct = 0;
-                        for (let d = 0; d < headDim; d++) {
-                            const idx_i = h * tensorSeqLen * headDim + i * headDim + d;
-                            const idx_j = h * tensorSeqLen * headDim + j * headDim + d;
-                            dotProduct += Number(data[idx_i]) * Number(data[idx_j]);
+
+                        if (hasQuery) {
+                            // Compute Q[i] @ K[j]^T (real attention)
+                            for (let d = 0; d < headDim; d++) {
+                                const q_idx = h * tensorSeqLen * headDim + i * headDim + d;
+                                const k_idx = h * tensorSeqLen * headDim + j * headDim + d;
+                                dotProduct += Number(queryData[q_idx]) * Number(keyData[k_idx]);
+                            }
+                        } else {
+                            // Fallback: Compute K[i] @ K[j]^T (key similarity approximation)
+                            for (let d = 0; d < headDim; d++) {
+                                const idx_i = h * tensorSeqLen * headDim + i * headDim + d;
+                                const idx_j = h * tensorSeqLen * headDim + j * headDim + d;
+                                dotProduct += Number(keyData[idx_i]) * Number(keyData[idx_j]);
+                            }
                         }
-                        // Apply causal mask
+
+                        // Apply causal mask and scale
                         if (j > i) {
                             row.push(0);
                         } else {
@@ -466,8 +492,9 @@ function extractAttentionFromKV(modelOutput: any, seqLen: number): number[][][][
         }
 
         if (attentions.length > 0) {
-            console.log(`Extracted ${attentions.length} layers from KV cache (K@K^T approximation)`);
-            return attentions;
+            const method = usedQKT ? 'Q@K^T (real attention)' : 'K@K^T (key similarity approximation)';
+            console.log(`Extracted ${attentions.length} layers from KV cache using ${method}`);
+            return { attentions, isQKT: usedQKT };
         }
 
         return null;
