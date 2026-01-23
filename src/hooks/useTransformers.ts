@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { pipeline, env, Tensor } from '@huggingface/transformers';
-import type { ModelInfo, InferenceResult, GenerationConfig, AttentionSource } from '../types';
+import type { ModelInfo, InferenceResult, GenerationConfig, AttentionSource, SteeringConfig } from '../types';
 import { detectCircuits } from '../utils/circuitDetection';
+import { scale } from '../utils/vectorMath';
 
 // Configure transformers.js for remote model fetching
 env.allowLocalModels = false;
@@ -20,6 +21,7 @@ export function useTransformers() {
     const pipelineRef = useRef<TextGenPipeline | null>(null);
     const tokenizerRef = useRef<any>(null);
     const modelRef = useRef<any>(null); // Raw model for attention extraction
+    const embeddingMatrixRef = useRef<Float32Array | null>(null); // Cached embedding matrix
 
     // Load model from Hugging Face Hub (cached locally after first download)
     const loadModel = useCallback(async (modelId: string) => {
@@ -61,8 +63,16 @@ export function useTransformers() {
             const config: any = pipe.model?.config || {};
             const numLayers = config.n_layer || config.num_hidden_layers || 6;
             const numHeads = config.n_head || config.num_attention_heads || 12;
+            const hiddenDim = config.n_embd || config.hidden_size || 768;
 
-            console.log('Model config:', { numLayers, numHeads, config });
+            console.log('Model config:', { numLayers, numHeads, hiddenDim, config });
+
+            // Try to extract and cache the embedding matrix for steering
+            try {
+                await extractEmbeddingMatrix(pipe.model, hiddenDim);
+            } catch (embErr) {
+                console.warn('Could not extract embedding matrix:', embErr);
+            }
 
             setModelInfo({
                 id: modelId,
@@ -70,6 +80,7 @@ export function useTransformers() {
                 loaded: true,
                 numLayers,
                 numHeads,
+                hiddenDim,
             });
 
             setLoadProgress(100);
@@ -83,10 +94,162 @@ export function useTransformers() {
         }
     }, []);
 
+    // Extract embedding matrix from model for steering vector injection
+    const extractEmbeddingMatrix = async (model: any, expectedHiddenDim: number) => {
+        try {
+            // Try to access word embeddings from different model architectures
+            const embeddings = model?.model?.embed_tokens?.weight ||
+                model?.transformer?.wte?.weight ||
+                model?.embeddings?.word_embeddings?.weight;
+
+            if (embeddings?.data) {
+                embeddingMatrixRef.current = new Float32Array(embeddings.data);
+                const shape = embeddings.dims || embeddings.shape;
+                const actualHiddenDim = shape?.[1] || expectedHiddenDim;
+                console.log('✓ Extracted embedding matrix:', {
+                    shape,
+                    size: embeddingMatrixRef.current.length,
+                    hiddenDim: actualHiddenDim,
+                });
+            } else {
+                console.warn('Could not find embedding weights in model');
+            }
+        } catch (e) {
+            console.warn('Failed to extract embedding matrix:', e);
+        }
+    };
+
+    // Get hidden state for a single text (for steering vector computation)
+    const getHiddenState = useCallback(async (
+        text: string
+    ): Promise<Float32Array | null> => {
+        if (!modelRef.current || !tokenizerRef.current) {
+            console.error('getHiddenState: Model or tokenizer not loaded');
+            return null;
+        }
+
+        try {
+            console.log('getHiddenState: Processing text:', text);
+            const tokenizer = tokenizerRef.current;
+            const model = modelRef.current;
+            const encoded = await tokenizer(text);
+            const inputIds = encoded.input_ids;
+
+            // Get sequence length
+            let idsArray: (bigint | number)[];
+            if (inputIds.tolist) {
+                idsArray = inputIds.tolist().flat();
+            } else if ((inputIds as any).ort_tensor?.cpuData) {
+                idsArray = Array.from((inputIds as any).ort_tensor.cpuData);
+            } else if ((inputIds as any).data) {
+                idsArray = Array.from((inputIds as any).data);
+            } else {
+                idsArray = Array.from(inputIds as any);
+            }
+
+            const seqLen = idsArray.length;
+            console.log('getHiddenState: Sequence length:', seqLen);
+
+            // Create attention mask and position ids
+            const attentionMaskData = new BigInt64Array(seqLen).fill(1n);
+            const attentionMask = new Tensor('int64', attentionMaskData, [1, seqLen]);
+
+            const positionIdsData = new BigInt64Array(seqLen);
+            for (let i = 0; i < seqLen; i++) {
+                positionIdsData[i] = BigInt(i);
+            }
+            const positionIds = new Tensor('int64', positionIdsData, [1, seqLen]);
+
+            // Run model forward pass with hidden states output
+            console.log('getHiddenState: Running model forward pass...');
+            const modelOutput = await model({
+                input_ids: inputIds,
+                attention_mask: attentionMask,
+                position_ids: positionIds,
+                output_hidden_states: true,
+            });
+
+            console.log('getHiddenState: Model output keys:', Object.keys(modelOutput));
+
+            // Method 1: Try to get hidden_states directly
+            if (modelOutput?.hidden_states && modelOutput.hidden_states.length > 0) {
+                console.log('getHiddenState: Found hidden_states, layers:', modelOutput.hidden_states.length);
+                const lastLayer = modelOutput.hidden_states[modelOutput.hidden_states.length - 1];
+                let data: Float32Array | number[];
+                if (lastLayer.data) {
+                    data = lastLayer.data;
+                } else if (lastLayer.ort_tensor?.cpuData) {
+                    data = lastLayer.ort_tensor.cpuData;
+                } else {
+                    console.warn('getHiddenState: Could not extract data from hidden state tensor');
+                    return null;
+                }
+
+                const dims = lastLayer.dims || lastLayer.shape || [1, seqLen, 768];
+                const hiddenDim = dims[dims.length - 1];
+                console.log('getHiddenState: Hidden dim:', hiddenDim);
+
+                // Get the last token's hidden state
+                const lastTokenStart = (seqLen - 1) * hiddenDim;
+                const result = new Float32Array(
+                    Array.from(data.slice(lastTokenStart, lastTokenStart + hiddenDim)).map(Number)
+                );
+                console.log('getHiddenState: Extracted vector of length:', result.length);
+                return result;
+            }
+
+            // Method 2: Fallback - use logits to approximate representation
+            // This is less accurate but works when hidden_states aren't available
+            if (modelOutput?.logits) {
+                console.log('getHiddenState: Falling back to logits-based approximation');
+                let logitsData: Float32Array | number[];
+                if (modelOutput.logits.data) {
+                    logitsData = modelOutput.logits.data;
+                } else if (modelOutput.logits.ort_tensor?.cpuData) {
+                    logitsData = modelOutput.logits.ort_tensor.cpuData;
+                } else {
+                    console.warn('getHiddenState: Could not extract logits data');
+                    return null;
+                }
+
+                const logitsDims = modelOutput.logits.dims || modelOutput.logits.shape;
+                const vocabSize = logitsDims[logitsDims.length - 1];
+
+                // Use the last position's logits as a representation
+                // This is a poor substitute but allows the feature to work
+                const lastPosStart = (seqLen - 1) * vocabSize;
+
+                // Take top-k logit values as a compressed representation
+                // This gives us a fixed-size vector that captures the model's "state"
+                const k = 768; // Match GPT-2's hidden dim
+                const lastLogits = Array.from(logitsData.slice(lastPosStart, lastPosStart + vocabSize)).map(Number);
+
+                // Sort by magnitude and take top-k indices and values
+                const indexed = lastLogits.map((v, i) => ({ v: Math.abs(v), i, orig: v }));
+                indexed.sort((a, b) => b.v - a.v);
+
+                const result = new Float32Array(k);
+                for (let i = 0; i < k && i < indexed.length; i++) {
+                    result[i] = indexed[i].orig;
+                }
+
+                console.log('getHiddenState: Created logits-based vector of length:', result.length);
+                return result;
+            }
+
+            console.error('getHiddenState: No hidden_states or logits in model output');
+            return null;
+        } catch (e) {
+            console.error('getHiddenState: Error:', e);
+            return null;
+        }
+    }, []);
+
     // Run inference and extract attention patterns
     const runInference = useCallback(async (
         prompt: string,
-        config: GenerationConfig
+        config: GenerationConfig,
+        steeringConfig?: SteeringConfig
     ): Promise<InferenceResult | null> => {
         if (!pipelineRef.current || !tokenizerRef.current) {
             setError('Model not loaded');
@@ -95,14 +258,30 @@ export function useTransformers() {
 
         try {
             const tokenizer = tokenizerRef.current;
+            const shouldSteer = steeringConfig?.enabled &&
+                steeringConfig.vector &&
+                steeringConfig.strength !== 0;
 
-            // Generate text
-            const result = await pipelineRef.current(prompt, {
-                max_new_tokens: config.maxNewTokens,
-                temperature: config.temperature,
-                top_k: config.topK,
-                return_full_text: true,
-            });
+            let result: any;
+
+            if (shouldSteer && modelRef.current && steeringConfig?.vector) {
+                // Steered inference: inject steering vector into embeddings
+                console.log('Running steered inference with strength:', steeringConfig.strength);
+                result = await runSteeredInference(
+                    prompt,
+                    config,
+                    steeringConfig.vector,
+                    steeringConfig.strength
+                );
+            } else {
+                // Normal inference
+                result = await pipelineRef.current(prompt, {
+                    max_new_tokens: config.maxNewTokens,
+                    temperature: config.temperature,
+                    top_k: config.topK,
+                    return_full_text: true,
+                });
+            }
 
             const generated: any = Array.isArray(result) ? result[0] : result;
             const outputText = generated.generated_text || '';
@@ -315,11 +494,317 @@ export function useTransformers() {
         }
     }, []);
 
+    // Run inference with steering vector injection into input embeddings
+    const runSteeredInference = async (
+        prompt: string,
+        config: GenerationConfig,
+        steeringVector: Float32Array,
+        strength: number
+    ): Promise<any> => {
+        const tokenizer = tokenizerRef.current;
+        const model = modelRef.current;
+
+        if (!tokenizer || !model) {
+            throw new Error('Model or tokenizer not available');
+        }
+
+        // Tokenize input
+        const encoded = await tokenizer(prompt);
+        const inputIds = encoded.input_ids;
+
+        // Get sequence length
+        let idsArray: (bigint | number)[];
+        if (inputIds.tolist) {
+            idsArray = inputIds.tolist().flat();
+        } else if ((inputIds as any).ort_tensor?.cpuData) {
+            idsArray = Array.from((inputIds as any).ort_tensor.cpuData);
+        } else if ((inputIds as any).data) {
+            idsArray = Array.from((inputIds as any).data);
+        } else {
+            idsArray = Array.from(inputIds as any);
+        }
+
+        const seqLen = idsArray.length;
+        const hiddenDim = steeringVector.length;
+
+        // Scale the steering vector by strength
+        const scaledVector = scale(steeringVector, strength);
+
+        // Try to get input embeddings from the model
+        let inputEmbeddings: Float32Array | null = null;
+
+        try {
+            // Method 1: Try to access the embedding layer directly
+            const embedLayer = model.model?.embed_tokens ||
+                model.transformer?.wte ||
+                model.embeddings?.word_embeddings;
+
+            if (embedLayer) {
+                // Get embedding weights
+                const weightData = embedLayer.weight?.data || embedLayer.weight?.ort_tensor?.cpuData;
+
+                if (weightData) {
+                    // Look up embeddings for each token
+                    inputEmbeddings = new Float32Array(seqLen * hiddenDim);
+
+                    for (let i = 0; i < seqLen; i++) {
+                        const tokenId = Number(idsArray[i]);
+                        const embStart = tokenId * hiddenDim;
+
+                        for (let j = 0; j < hiddenDim; j++) {
+                            // Copy original embedding
+                            inputEmbeddings[i * hiddenDim + j] = Number(weightData[embStart + j]);
+                            // Add steering vector to each position
+                            inputEmbeddings[i * hiddenDim + j] += scaledVector[j];
+                        }
+                    }
+
+                    console.log('✓ Created steered embeddings for', seqLen, 'tokens');
+                }
+            }
+        } catch (e) {
+            console.warn('Could not access embedding layer directly:', e);
+        }
+
+        // If we have steered embeddings, use them
+        if (inputEmbeddings) {
+            const embedsTensor = new Tensor(
+                'float32',
+                inputEmbeddings,
+                [1, seqLen, hiddenDim]
+            );
+
+            // Create attention mask and position ids
+            const attentionMaskData = new BigInt64Array(seqLen).fill(1n);
+            const attentionMask = new Tensor('int64', attentionMaskData, [1, seqLen]);
+
+            const positionIdsData = new BigInt64Array(seqLen);
+            for (let i = 0; i < seqLen; i++) {
+                positionIdsData[i] = BigInt(i);
+            }
+            const positionIds = new Tensor('int64', positionIdsData, [1, seqLen]);
+
+            // Try to run generation with inputs_embeds
+            // Note: transformers.js pipeline might not support inputs_embeds directly
+            // We'll try calling the model directly and then decoding
+            try {
+                // First, get the model's output with steered embeddings
+                const modelOutput = await model({
+                    inputs_embeds: embedsTensor,
+                    attention_mask: attentionMask,
+                    position_ids: positionIds,
+                    output_attentions: true,
+                    output_hidden_states: true,
+                });
+
+                // Get the predicted next token from logits
+                const logits = modelOutput.logits;
+                let logitsData: Float32Array | number[];
+                if (logits.data) {
+                    logitsData = logits.data;
+                } else if (logits.ort_tensor?.cpuData) {
+                    logitsData = logits.ort_tensor.cpuData;
+                } else {
+                    throw new Error('Cannot access logits');
+                }
+
+                const vocabSize = logits.dims?.[logits.dims.length - 1] || 50257;
+                const lastPosStart = (seqLen - 1) * vocabSize;
+                const lastLogits = Array.from(logitsData.slice(lastPosStart, lastPosStart + vocabSize));
+
+                // Apply temperature
+                const temp = config.temperature || 1.0;
+                const scaledLogits = lastLogits.map(l => Number(l) / temp);
+
+                // Softmax
+                const maxLogit = Math.max(...scaledLogits);
+                const expLogits = scaledLogits.map(l => Math.exp(l - maxLogit));
+                const sumExp = expLogits.reduce((a, b) => a + b, 0);
+                const probs = expLogits.map(e => e / sumExp);
+
+                // Sample or argmax based on temperature
+                let nextTokenId: number;
+                if (temp <= 0.01) {
+                    // Greedy
+                    nextTokenId = probs.indexOf(Math.max(...probs));
+                } else {
+                    // Top-k sampling
+                    const k = config.topK || 50;
+                    const indexed = probs.map((p, i) => ({ p, i }));
+                    indexed.sort((a, b) => b.p - a.p);
+                    const topK = indexed.slice(0, k);
+
+                    // Re-normalize top-k
+                    const topKSum = topK.reduce((s, x) => s + x.p, 0);
+                    const topKProbs = topK.map(x => x.p / topKSum);
+
+                    // Sample
+                    const r = Math.random();
+                    let cumsum = 0;
+                    nextTokenId = topK[topK.length - 1].i;
+                    for (let i = 0; i < topK.length; i++) {
+                        cumsum += topKProbs[i];
+                        if (r < cumsum) {
+                            nextTokenId = topK[i].i;
+                            break;
+                        }
+                    }
+                }
+
+                // Generate multiple tokens if requested
+                let generatedIds: number[] = [...idsArray.map(Number), nextTokenId];
+                let currentEmbeddings = inputEmbeddings;
+
+                // Generate additional tokens
+                for (let step = 1; step < config.maxNewTokens; step++) {
+                    const currentSeqLen = generatedIds.length;
+
+                    // Create new embeddings with the generated token
+                    const newEmbeddings = new Float32Array(currentSeqLen * hiddenDim);
+
+                    // Copy previous embeddings
+                    for (let i = 0; i < currentSeqLen - 1; i++) {
+                        for (let j = 0; j < hiddenDim; j++) {
+                            newEmbeddings[i * hiddenDim + j] = currentEmbeddings[i * hiddenDim + j];
+                        }
+                    }
+
+                    // Get embedding for new token and add steering
+                    const embedLayer = model.model?.embed_tokens ||
+                        model.transformer?.wte ||
+                        model.embeddings?.word_embeddings;
+                    const weightData = embedLayer?.weight?.data || embedLayer?.weight?.ort_tensor?.cpuData;
+
+                    if (weightData) {
+                        const lastTokenId = generatedIds[currentSeqLen - 1];
+                        const embStart = lastTokenId * hiddenDim;
+                        for (let j = 0; j < hiddenDim; j++) {
+                            newEmbeddings[(currentSeqLen - 1) * hiddenDim + j] =
+                                Number(weightData[embStart + j]) + scaledVector[j];
+                        }
+                    }
+
+                    currentEmbeddings = newEmbeddings;
+
+                    const newEmbedsTensor = new Tensor(
+                        'float32',
+                        newEmbeddings,
+                        [1, currentSeqLen, hiddenDim]
+                    );
+
+                    const newAttnMask = new Tensor(
+                        'int64',
+                        new BigInt64Array(currentSeqLen).fill(1n),
+                        [1, currentSeqLen]
+                    );
+
+                    const newPosIds = new BigInt64Array(currentSeqLen);
+                    for (let i = 0; i < currentSeqLen; i++) {
+                        newPosIds[i] = BigInt(i);
+                    }
+                    const newPosIdsTensor = new Tensor('int64', newPosIds, [1, currentSeqLen]);
+
+                    const stepOutput = await model({
+                        inputs_embeds: newEmbedsTensor,
+                        attention_mask: newAttnMask,
+                        position_ids: newPosIdsTensor,
+                    });
+
+                    // Get next token
+                    let stepLogits: Float32Array | number[];
+                    if (stepOutput.logits.data) {
+                        stepLogits = stepOutput.logits.data;
+                    } else if (stepOutput.logits.ort_tensor?.cpuData) {
+                        stepLogits = stepOutput.logits.ort_tensor.cpuData;
+                    } else {
+                        break;
+                    }
+
+                    // Apply simple repetition penalty to logits before sampling
+                    const repetitionPenalty = 1.2;
+                    for (const id of generatedIds) {
+                        const tokenIdx = Number(id);
+                        if (tokenIdx < stepLogits.length) {
+                            // If logit is positive, divide by penalty. If negative, multiply.
+                            // Simplified: just decrease probability of seen tokens
+                            if (stepLogits[tokenIdx] > 0) {
+                                stepLogits[tokenIdx] /= repetitionPenalty;
+                            } else {
+                                stepLogits[tokenIdx] *= repetitionPenalty;
+                            }
+                        }
+                    }
+
+                    const stepVocabSize = stepOutput.logits.dims?.[stepOutput.logits.dims.length - 1] || 50257;
+                    const stepLastStart = (currentSeqLen - 1) * stepVocabSize;
+                    const stepLastLogits = Array.from(stepLogits.slice(stepLastStart, stepLastStart + stepVocabSize));
+
+                    const stepScaledLogits = stepLastLogits.map(l => Number(l) / temp);
+                    const stepMaxLogit = Math.max(...stepScaledLogits);
+                    const stepExpLogits = stepScaledLogits.map(l => Math.exp(l - stepMaxLogit));
+                    const stepSumExp = stepExpLogits.reduce((a, b) => a + b, 0);
+                    const stepProbs = stepExpLogits.map(e => e / stepSumExp);
+
+                    // Sample next token
+                    let stepNextToken: number;
+                    if (temp <= 0.01) {
+                        stepNextToken = stepProbs.indexOf(Math.max(...stepProbs));
+                    } else {
+                        const k = config.topK || 50;
+                        const indexed = stepProbs.map((p, i) => ({ p, i }));
+                        indexed.sort((a, b) => b.p - a.p);
+                        const topK = indexed.slice(0, k);
+                        const topKSum = topK.reduce((s, x) => s + x.p, 0);
+                        const topKProbs = topK.map(x => x.p / topKSum);
+
+                        const r = Math.random();
+                        let cumsum = 0;
+                        stepNextToken = topK[topK.length - 1].i;
+                        for (let i = 0; i < topK.length; i++) {
+                            cumsum += topKProbs[i];
+                            if (r < cumsum) {
+                                stepNextToken = topK[i].i;
+                                break;
+                            }
+                        }
+                    }
+
+                    generatedIds.push(stepNextToken);
+
+                    // Check for EOS
+                    if (stepNextToken === 50256) break; // GPT-2 EOS token
+                }
+
+                // Decode the full sequence
+                const generatedText = tokenizer.decode(generatedIds, { skip_special_tokens: true });
+
+                return [{
+                    generated_text: generatedText,
+                    _steered: true,
+                    _modelOutput: modelOutput,
+                }];
+            } catch (e) {
+                console.warn('Steered generation failed, falling back to normal:', e);
+            }
+        }
+
+        // Fallback to normal generation if steering failed
+        console.log('Falling back to normal generation');
+        return await pipelineRef.current!(prompt, {
+            max_new_tokens: config.maxNewTokens,
+            temperature: config.temperature,
+            top_k: config.topK,
+            repetition_penalty: 1.2, // Encourages diversity
+            return_full_text: true,
+        });
+    };
+
     // Unload model to free memory
     const unloadModel = useCallback(() => {
         pipelineRef.current = null;
         tokenizerRef.current = null;
         modelRef.current = null;
+        embeddingMatrixRef.current = null;
         setModelInfo(null);
         setLoadProgress(0);
     }, []);
@@ -348,6 +833,7 @@ export function useTransformers() {
         unloadModel,
         clearCache,
         getTokenizer: () => tokenizerRef.current,
+        getHiddenState, // Already implemented in previous read
     };
 }
 

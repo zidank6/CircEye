@@ -1,0 +1,314 @@
+/* Steering Panel */
+.steering-panel.active {
+    background: rgba(78, 205, 196, 0.05);
+    /* Cyber teal hint */
+    border-left: 3px solid #4ecdc4;
+    padding-left: 12px;
+}
+
+.steering-panel.disabled {
+    opacity: 0.6;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.panel-header h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+/* Toggle Switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #333;
+    transition: .2s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .2s;
+}
+
+input:checked+.slider {
+    background-color: #4ecdc4;
+}
+
+input:checked+.slider:before {
+    transform: translateX(16px);
+}
+
+.slider.round {
+    border-radius: 20px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+/* Card for active vector */
+.active-vector-card {
+    background: #1a1a2e;
+    border: 1px solid #4ecdc4;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.vector-icon {
+    font-size: 1.2rem;
+    color: #ff6b6b;
+}
+
+.vector-details {
+    display: flex;
+    flex-direction: column;
+}
+
+.vector-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
+.vector-title {
+    font-weight: bold;
+    color: #fff;
+    font-size: 0.9rem;
+}
+
+.vector-meta {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+}
+
+/* Strength Slider */
+.strength-control {
+    margin-top: 10px;
+}
+
+.strength-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+}
+
+.range-input {
+    width: 100%;
+    accent-color: #4ecdc4;
+}
+
+.range-marks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+
+.quick-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.quick-actions button {
+    flex: 1;
+    padding: 4px;
+    font-size: 0.8rem;
+    background: #333;
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+}
+
+.quick-actions button:hover {
+    background: #444;
+}
+
+/* Vector Lab */
+.vector-lab h3 {
+    margin-top: 0;
+    color: #ff6b6b;
+    /* Accent color for "Science" features */
+}
+
+.hint {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+}
+
+.examples-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* Side by side */
+    gap: 8px;
+    /* Small gap */
+    margin-bottom: 12px;
+}
+
+.example-column label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.example-column textarea {
+    width: 100%;
+    background: #0f0f1a;
+    border: 1px solid #333;
+    color: #e0e0e0;
+    padding: 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 80px;
+}
+
+.example-column textarea:focus {
+    border-color: #ff6b6b;
+    outline: none;
+}
+
+.save-form {
+    background: #1a1a2e;
+    padding: 10px;
+    border-radius: 6px;
+    margin-top: 12px;
+    border: 1px solid #444;
+}
+
+.input-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.input-group input {
+    flex: 1;
+    background: #0f0f1a;
+    border: 1px solid #333;
+    padding: 6px;
+    color: #fff;
+    border-radius: 4px;
+}
+
+.btn-success {
+    background: #2ecc71;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0 12px;
+    cursor: pointer;
+}
+
+.saved-list {
+    margin-top: 16px;
+    max-height: 200px;
+    /* Prevent it from taking too much vertical space */
+    overflow-y: auto;
+}
+
+.saved-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #333;
+}
+
+.vector-name {
+    font-size: 0.85rem;
+    max-width: 140px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vector-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.btn-sm {
+    padding: 2px 8px;
+    font-size: 0.75rem;
+    background: #333;
+    border: none;
+    border-radius: 3px;
+    color: #e0e0e0;
+    cursor: pointer;
+}
+
+.btn-sm:hover {
+    background: #555;
+}
+
+.btn-danger {
+    color: #ff6b6b;
+}
+
+.btn-danger:hover {
+    background: rgba(255, 107, 107, 0.2);
+}
+
+.steering-badge {
+    background: linear-gradient(90deg, #6c5ce7 0%, #a29bfe 100%);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-right: 12px;
+    box-shadow: 0 0 10px rgba(108, 92, 231, 0.4);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(108, 92, 231, 0.4);
+    }
+
+    70% {
+        box-shadow: 0 0 0 10px rgba(108, 92, 231, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(108, 92, 231, 0);
+    }
+}

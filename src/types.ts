@@ -6,6 +6,7 @@ export interface ModelInfo {
     loaded: boolean;
     numLayers: number;
     numHeads: number;
+    hiddenDim: number;
 }
 
 export interface AttentionData {
@@ -62,6 +63,13 @@ export interface GenerationConfig {
     maxNewTokens: number;
     temperature: number;
     topK: number;
+}
+
+export interface SteeringConfig {
+    enabled: boolean;
+    vector: Float32Array | null;
+    strength: number;
+    vectorName: string | null;
 }
 
 export interface ExportOptions {
