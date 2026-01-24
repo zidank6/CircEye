@@ -36,15 +36,15 @@ export function useTransformers() {
                 allowRemote: env.allowRemoteModels,
             });
 
-            // Use WASM backend for broader compatibility
-            // WebGPU can be enabled later if available and stable
-            const device = 'wasm';
+            // Use WebGPU if available, fallback to WASM
+            // @ts-ignore - navigator.gpu
+            const device = navigator.gpu ? 'webgpu' : 'wasm';
             console.log(`Using device: ${device}`);
 
             // Create text generation pipeline with progress tracking
             const pipe = await pipeline('text-generation', modelId, {
                 device,
-                dtype: 'fp32',
+                dtype: 'fp32', // Qwen works best with fp32 or q8, let auto-detect handle if possible
                 progress_callback: (progress: any) => {
                     console.log('Progress:', progress);
                     if (progress.status === 'progress' && progress.progress !== undefined) {
@@ -61,9 +61,9 @@ export function useTransformers() {
 
             // Try to get actual model config for accurate layer/head counts
             const config: any = pipe.model?.config || {};
-            const numLayers = config.n_layer || config.num_hidden_layers || 6;
-            const numHeads = config.n_head || config.num_attention_heads || 12;
-            const hiddenDim = config.n_embd || config.hidden_size || 768;
+            const numLayers = config.n_layer || config.num_hidden_layers || 24; // Qwen 0.5B has 24 layers
+            const numHeads = config.n_head || config.num_attention_heads || 16; // Qwen 0.5B has 16 heads
+            const hiddenDim = config.n_embd || config.hidden_size || 1024; // Qwen 0.5B has 1024 dim
 
             console.log('Model config:', { numLayers, numHeads, hiddenDim, config });
 
