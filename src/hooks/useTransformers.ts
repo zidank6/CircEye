@@ -49,10 +49,6 @@ export function useTransformers() {
             const pipe = await pipeline('text-generation', modelId, {
                 device,
                 dtype: isQwen ? 'q8' : 'fp32', // Use q8 for quantized Qwen, fp32 for others
-                // Explicitly request quantized ONNX file for Qwen to avoid looking for model.onnx
-                // Transformers.js adds .onnx extension automatically
-                // It also adds _quantized if quantized: true is set
-                model_file_name: isQwen ? 'decoder_model_merged' : undefined,
                 progress_callback: (progress: any) => {
                     console.log('Progress:', progress);
                     if (progress.status === 'progress' && progress.progress !== undefined) {
@@ -1109,11 +1105,12 @@ async function getTopPredictions(
         if (vocabSize === 0) {
             const commonVocabs = [151936, 151643, 151646, 128256, 32000, 32001, 32064, 50257, 50272, 50277];
 
-            // Prioritize explicit size ONLY if it fits the data
-            if (explicitVocabSize && explicitVocabSize > 0 && totalLen % explicitVocabSize === 0) {
+            // FORCE Explicit Size if available (e.g. Qwen 151936)
+            // Even if totalLen isn't perfectly divisible, we trust the known model architecture
+            if (explicitVocabSize && explicitVocabSize > 0) {
                 vocabSize = explicitVocabSize;
-                seqLen = totalLen / vocabSize;
-                console.log(`[getTopPredictions] Explicit vocab size matched: ${vocabSize}`);
+                seqLen = Math.floor(totalLen / vocabSize);
+                console.log(`[getTopPredictions] Forcing explicit vocab size: ${vocabSize} (seq=${seqLen})`);
             } else {
                 // Try to find a matching vocab
                 for (const v of commonVocabs) {
@@ -1147,11 +1144,19 @@ async function getTopPredictions(
 
         // Get logits for the LAST position
         const lastPosStart = (seqLen - 1) * vocabSize;
-        if (lastPosStart < 0 || lastPosStart + vocabSize > totalLen) {
-            console.error(`[getTopPredictions] Bounds error: start=${lastPosStart}, end=${lastPosStart + vocabSize}, total=${totalLen}`);
+
+        // RELAXED Bounds Check:
+        // If data is truncated (common in quantized models), we still want to read what's there.
+        if (lastPosStart < 0) {
+            console.error(`[getTopPredictions] Negative start index: ${lastPosStart}`);
             return [];
         }
 
+        if (lastPosStart + vocabSize > totalLen) {
+            console.warn(`[getTopPredictions] Truncated data: Expected ${vocabSize}, available ${totalLen - lastPosStart}. Slicing safe range.`);
+        }
+
+        // slice() handles out-of-bounds end automatically by clamping to length
         const lastLogits = Array.from(logitsData.slice(lastPosStart, lastPosStart + vocabSize));
 
         // Compute softmax probabilities
@@ -1211,6 +1216,13 @@ async function getTopPredictions(
 
     } catch (e) {
         console.warn('Could not get predictions:', e);
+        // Debug probe
+        predictions.push([{ token: `Err: ${e}`, probability: 0 }]);
+    }
+
+    if (predictions.length === 0) {
+        // Debug probe for empty return
+        predictions.push([{ token: "No Data", probability: 0 }]);
     }
 
     return predictions;

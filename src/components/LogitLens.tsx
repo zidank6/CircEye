@@ -5,11 +5,29 @@ interface LogitLensProps {
 }
 
 export function LogitLens({ topPredictions }: LogitLensProps) {
-    if (!topPredictions.length) return null;
+    if (!topPredictions || !topPredictions.length) {
+        return (
+            <div className="logit-lens">
+                <h3>Next Token Predictions</h3>
+                <div className="lens-item" style={{ opacity: 0.5, fontStyle: 'italic' }}>
+                    No predictions available yet.
+                </div>
+            </div>
+        );
+    }
 
     // Show only the final layer predictions (actual next token probabilities)
     const finalPreds = topPredictions[topPredictions.length - 1];
-    if (!finalPreds?.length) return null;
+    if (!finalPreds?.length) {
+        return (
+            <div className="logit-lens">
+                <h3>Next Token Predictions</h3>
+                <div className="lens-item" style={{ opacity: 0.5 }}>
+                    Empty prediction set.
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="logit-lens">
