@@ -22,6 +22,7 @@ export function useTransformers() {
     const tokenizerRef = useRef<any>(null);
     const modelRef = useRef<any>(null); // Raw model for attention extraction
     const embeddingMatrixRef = useRef<Float32Array | null>(null); // Cached embedding matrix
+    const modelIdRef = useRef<string | null>(null); // Track current model ID persistently
 
     // Load model from Hugging Face Hub (cached locally after first download)
     const loadModel = useCallback(async (modelId: string) => {
@@ -40,7 +41,7 @@ export function useTransformers() {
             // @ts-ignore - navigator.gpu
             const isQwen = modelId.toLowerCase().includes('qwen');
             // Force WASM for Qwen due to WebGPU GQA bug causing garbage output
-            const device = isQwen ? 'wasm' : (navigator.gpu ? 'webgpu' : 'wasm');
+            const device = isQwen ? 'wasm' : ((navigator as any).gpu ? 'webgpu' : 'wasm');
             console.log(`Using device: ${device}`);
 
             // Create text generation pipeline with progress tracking
@@ -65,6 +66,7 @@ export function useTransformers() {
             pipelineRef.current = pipe;
             tokenizerRef.current = pipe.tokenizer;
             modelRef.current = pipe.model; // Access underlying model for attention extraction
+            modelIdRef.current = modelId; // Store ID for inference callbacks
 
             // Try to get actual model config for accurate layer/head counts
             const config: any = pipe.model?.config || {};
@@ -451,11 +453,21 @@ export function useTransformers() {
             }
 
             // Detect interpretable circuits in attention patterns
+            // Detect interpretable circuits in attention patterns
             const circuits = detectCircuits(attentions, allTokens);
 
-            // Get proper vocab size for Qwen (151936) vs GPT-2 (50257)
-            const modelConfig = modelRef.current?.config || {};
-            const vocabSize = modelConfig.vocab_size || 50257;
+            // FORCE CORRECT VOCAB SIZE
+            // Standard config is often wrong for quantized ONNX
+            let vocabSize = 0;
+            const currentModelId = modelIdRef.current || '';
+            if (currentModelId.toLowerCase().includes('qwen')) {
+                vocabSize = 151936; // Qwen 1.5 standard
+            } else if (currentModelId.toLowerCase().includes('llama')) {
+                vocabSize = 32000;
+            } else {
+                vocabSize = modelRef.current?.config?.vocab_size || 50257;
+            }
+            console.log('Forced inference vocab size:', vocabSize);
 
             // Get top predictions from model logits
             const numLayersForLens = attentions.length || 6;
@@ -463,7 +475,7 @@ export function useTransformers() {
                 modelOutput,
                 tokenizer,
                 numLayersForLens,
-                vocabSize
+                vocabSize // Pass explicit size
             );
 
             // Extract hidden states for real ablation computation
@@ -481,7 +493,7 @@ export function useTransformers() {
             let rawLogits: number[] | null = null;
             if (modelOutput?.logits) {
                 try {
-                    rawLogits = extractRawLogits(modelOutput.logits, vocabSize);
+                    rawLogits = extractRawLogits(modelOutput.logits, vocabSize); // Pass explicit size
                     console.log(`✓ Extracted raw logits: ${rawLogits.length} entries`);
                 } catch (logitError) {
                     console.warn('Failed to extract raw logits:', logitError);
@@ -1077,29 +1089,66 @@ async function getTopPredictions(
             return [];
         }
 
-        const dims = logits.dims || logits.shape || [];
-        // Use explicit vocab size if provided (critical for Qwen where auto-detection might fail), else try detection
-        const vocabSize = explicitVocabSize || dims[dims.length - 1] || 50257;
+        const dims = logits.dims || logits.shape || logits.ort_tensor?.dims || [];
+        const totalLen = logitsData.length;
 
-        // If dims are missing, we assume batch=1, seq=1? No, we should try to guess seqLen from data length
-        let seqLen = dims.length > 2 ? dims[1] : 1;
+        let vocabSize = 0;
+        let seqLen = 0;
 
-        if (dims.length === 0 && logitsData.length > 0) {
-            // Heuristic: data length should be multiple of vocabSize
-            seqLen = logitsData.length / vocabSize;
-            if (!Number.isInteger(seqLen)) {
-                console.warn(`Calculated seqLen ${seqLen} is not integer with vocab ${vocabSize}. Data len: ${logitsData.length}`);
-                seqLen = Math.floor(seqLen); // Fallback
+        // 1. Trust Tensor Dimensions (If Valid)
+        if (dims.length >= 1) {
+            const lastDim = dims[dims.length - 1];
+            if (lastDim > 30000) {
+                vocabSize = lastDim;
+                seqLen = Math.floor(totalLen / vocabSize);
+                console.log(`[getTopPredictions] Found dims: ${dims} -> vocab=${vocabSize}, seq=${seqLen}`);
             }
         }
 
-        console.log('Logits dims:', dims, 'vocab:', vocabSize, 'seq:', seqLen);
+        // 2. Adaptive Snapping (If dims failed or missing)
+        if (vocabSize === 0) {
+            const commonVocabs = [151936, 151643, 151646, 128256, 32000, 32001, 32064, 50257, 50272, 50277];
 
-        // Get logits for the last position (next token prediction)
+            // Prioritize explicit size ONLY if it fits the data
+            if (explicitVocabSize && explicitVocabSize > 0 && totalLen % explicitVocabSize === 0) {
+                vocabSize = explicitVocabSize;
+                seqLen = totalLen / vocabSize;
+                console.log(`[getTopPredictions] Explicit vocab size matched: ${vocabSize}`);
+            } else {
+                // Try to find a matching vocab
+                for (const v of commonVocabs) {
+                    if (totalLen % v === 0) {
+                        vocabSize = v;
+                        seqLen = totalLen / v;
+                        console.log(`[getTopPredictions] Auto-detected vocab: ${vocabSize}`);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 3. Last Resort: Single Token Output?
+        if (vocabSize === 0) {
+            if (totalLen > 30000) {
+                vocabSize = totalLen;
+                seqLen = 1;
+                console.log(`[getTopPredictions] Fallback: Assuming single token output (vocab=${vocabSize})`);
+            } else {
+                vocabSize = 50257; // Legacy GPT-2
+                seqLen = Math.floor(totalLen / vocabSize);
+                console.log(`[getTopPredictions] Fallback: Legacy GPT-2 default`);
+            }
+        }
+
+        // Safety clamp
+        if (seqLen === 0) seqLen = 1;
+
+        console.log(`[getTopPredictions] Final: seq=${seqLen}, vocab=${vocabSize}, total=${totalLen}`);
+
+        // Get logits for the LAST position
         const lastPosStart = (seqLen - 1) * vocabSize;
-        // Safety check boundaries
-        if (lastPosStart < 0 || lastPosStart + vocabSize > logitsData.length) {
-            console.error(`Logit slice out of bounds: start=${lastPosStart}, vocab=${vocabSize}, len=${logitsData.length}`);
+        if (lastPosStart < 0 || lastPosStart + vocabSize > totalLen) {
+            console.error(`[getTopPredictions] Bounds error: start=${lastPosStart}, end=${lastPosStart + vocabSize}, total=${totalLen}`);
             return [];
         }
 
