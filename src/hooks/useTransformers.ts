@@ -453,12 +453,17 @@ export function useTransformers() {
             // Detect interpretable circuits in attention patterns
             const circuits = detectCircuits(attentions, allTokens);
 
+            // Get proper vocab size for Qwen (151936) vs GPT-2 (50257)
+            const modelConfig = modelRef.current?.config || {};
+            const vocabSize = modelConfig.vocab_size || 50257;
+
             // Get top predictions from model logits
             const numLayersForLens = attentions.length || 6;
             const topPredictions = await getTopPredictions(
                 modelOutput,
                 tokenizer,
-                numLayersForLens
+                numLayersForLens,
+                vocabSize
             );
 
             // Extract hidden states for real ablation computation
@@ -476,7 +481,7 @@ export function useTransformers() {
             let rawLogits: number[] | null = null;
             if (modelOutput?.logits) {
                 try {
-                    rawLogits = extractRawLogits(modelOutput.logits);
+                    rawLogits = extractRawLogits(modelOutput.logits, vocabSize);
                     console.log(`✓ Extracted raw logits: ${rawLogits.length} entries`);
                 } catch (logitError) {
                     console.warn('Failed to extract raw logits:', logitError);
@@ -896,10 +901,37 @@ function extractAttentionFromKV(modelOutput: any, seqLen: number): { attentions:
         let layerIdx = 0;
         let usedQKT = false;
 
-        // Look for present.X.key tensors
-        while (modelOutput[`present.${layerIdx}.key`]) {
-            const keyTensor = modelOutput[`present.${layerIdx}.key`];
-            const queryTensor = modelOutput[`present.${layerIdx}.query`];
+        // Try to determine the key format
+        // Common formats: 'present.0.key', 'past_key_values.0.key', 'present_key_values.0.key'
+        const hasPresentDot = keys.some(k => k.match(/^present\.\d+\.key$/));
+        const hasPastDot = keys.some(k => k.match(/^past_key_values\.\d+\.key$/));
+
+        console.log(`KV Key Format Detection: present.X.key=${hasPresentDot}, past_key_values.X.key=${hasPastDot}`);
+
+        // Iterate through layers
+        while (true) {
+            let keyTensor: any = null;
+            let queryTensor: any = null;
+
+            if (hasPresentDot && modelOutput[`present.${layerIdx}.key`]) {
+                keyTensor = modelOutput[`present.${layerIdx}.key`];
+                queryTensor = modelOutput[`present.${layerIdx}.query`];
+            } else if (hasPastDot && modelOutput[`past_key_values.${layerIdx}.key`]) {
+                keyTensor = modelOutput[`past_key_values.${layerIdx}.key`];
+                queryTensor = modelOutput[`past_key_values.${layerIdx}.query`];
+            } else if (modelOutput[`present.${layerIdx}.key`]) {
+                // Fallback to simple check
+                keyTensor = modelOutput[`present.${layerIdx}.key`];
+                queryTensor = modelOutput[`present.${layerIdx}.query`];
+            } else if (modelOutput[`model.layers.${layerIdx}.self_attn.k_proj.weight`]) {
+                // If we see weights but no KV cache, we might be looking at the wrong object or it's not outputting cache
+                break;
+            } else {
+                // No more layers found
+                break;
+            }
+
+            if (!keyTensor) break;
 
             // Get key tensor data and dimensions
             const keyData = keyTensor.data || keyTensor.ort_tensor?.cpuData;
@@ -911,18 +943,38 @@ function extractAttentionFromKV(modelOutput: any, seqLen: number): { attentions:
             }
 
             // dims typically: [batch, num_heads, seq_len, head_dim]
-            console.log(`KV layer ${layerIdx} key dims:`, keyDims);
+            if (layerIdx === 0) console.log(`KV layer ${layerIdx} key dims:`, keyDims);
 
-            if (keyDims.length < 4) {
+            if (keyDims.length < 3) { // Allow 3 dims if batch=1 is squeezed
                 console.warn(`Unexpected dims length: ${keyDims.length}, skipping layer`);
                 layerIdx++;
                 continue;
             }
 
-            const [_batch, numHeads, tensorSeqLen, headDim] = keyDims;
+            // Handle different dimension layouts
+            // [batch, heads, seq, dim] vs [batch, heads, dim, seq] vs [batch, seq, heads, dim]
+            let numHeads: number, tensorSeqLen: number, headDim: number;
 
-            if (!numHeads || !tensorSeqLen || !headDim) {
-                console.warn(`Invalid dims values: heads=${numHeads}, seq=${tensorSeqLen}, dim=${headDim}`);
+            if (keyDims.length === 4) {
+                // Standard [batch, heads, seq, dim] for many ONNX (including Qwen/Llama usually)
+                // BUT Qwen might be [batch, heads, seq, dim] or [batch, seq, heads, dim]?
+                // Let's assume standard for now: [batch, heads, seq, dim]
+                [, numHeads, tensorSeqLen, headDim] = keyDims;
+
+                // Heuristic: if dim 2 is usually small (heads), dim 3 is variable (seq)?
+                // Qwen 0.5B: 16 heads, 1024 hidden -> 64 head dim.
+                // If we see [1, 16, 12, 64] -> heads=16, seq=12, dim=64.
+                // If we see [1, 12, 16, 64] -> seq=12?
+
+                // Check if likely transposed
+                if (numHeads > 100 && tensorSeqLen < 100) {
+                    // likely [batch, seq, heads, dim]
+                    const tmp = numHeads;
+                    numHeads = tensorSeqLen;
+                    tensorSeqLen = tmp;
+                }
+            } else {
+                // fallback
                 layerIdx++;
                 continue;
             }
@@ -1001,7 +1053,8 @@ function extractAttentionFromKV(modelOutput: any, seqLen: number): { attentions:
 async function getTopPredictions(
     modelOutput: any,
     tokenizer: any,
-    numLayers: number
+    numLayers: number,
+    explicitVocabSize?: number
 ): Promise<{ token: string; probability: number }[][]> {
     const predictions: { token: string; probability: number }[][] = [];
 
@@ -1025,13 +1078,31 @@ async function getTopPredictions(
         }
 
         const dims = logits.dims || logits.shape || [];
-        const vocabSize = dims[dims.length - 1] || 50257; // GPT-2 vocab size
-        const seqLen = dims.length > 2 ? dims[1] : 1;
+        // Use explicit vocab size if provided (critical for Qwen where auto-detection might fail), else try detection
+        const vocabSize = explicitVocabSize || dims[dims.length - 1] || 50257;
+
+        // If dims are missing, we assume batch=1, seq=1? No, we should try to guess seqLen from data length
+        let seqLen = dims.length > 2 ? dims[1] : 1;
+
+        if (dims.length === 0 && logitsData.length > 0) {
+            // Heuristic: data length should be multiple of vocabSize
+            seqLen = logitsData.length / vocabSize;
+            if (!Number.isInteger(seqLen)) {
+                console.warn(`Calculated seqLen ${seqLen} is not integer with vocab ${vocabSize}. Data len: ${logitsData.length}`);
+                seqLen = Math.floor(seqLen); // Fallback
+            }
+        }
 
         console.log('Logits dims:', dims, 'vocab:', vocabSize, 'seq:', seqLen);
 
         // Get logits for the last position (next token prediction)
         const lastPosStart = (seqLen - 1) * vocabSize;
+        // Safety check boundaries
+        if (lastPosStart < 0 || lastPosStart + vocabSize > logitsData.length) {
+            console.error(`Logit slice out of bounds: start=${lastPosStart}, vocab=${vocabSize}, len=${logitsData.length}`);
+            return [];
+        }
+
         const lastLogits = Array.from(logitsData.slice(lastPosStart, lastPosStart + vocabSize));
 
         // Compute softmax probabilities
@@ -1131,7 +1202,7 @@ async function extractHiddenStates(hiddenStatesOutput: any[]): Promise<number[][
 }
 
 // Extract raw logits for the final position
-function extractRawLogits(logits: any): number[] {
+function extractRawLogits(logits: any, explicitVocabSize?: number): number[] {
     let logitsData: Float32Array | number[];
     if (logits.data) {
         logitsData = logits.data;
@@ -1142,10 +1213,16 @@ function extractRawLogits(logits: any): number[] {
     }
 
     const dims = logits.dims || logits.shape || [];
-    const vocabSize = dims[dims.length - 1] || 50257;
-    const seqLen = dims.length > 2 ? dims[1] : 1;
+    const vocabSize = explicitVocabSize || dims[dims.length - 1] || 50257;
+    let seqLen = dims.length > 2 ? dims[1] : 1;
+
+    if (dims.length === 0 && logitsData.length > 0) {
+        seqLen = Math.floor(logitsData.length / vocabSize);
+    }
 
     // Get logits for the last position
     const lastPosStart = (seqLen - 1) * vocabSize;
+    if (lastPosStart < 0 || lastPosStart + vocabSize > logitsData.length) return [];
+
     return Array.from(logitsData.slice(lastPosStart, lastPosStart + vocabSize)).map(Number);
 }
