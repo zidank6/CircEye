@@ -42,9 +42,14 @@ export function useTransformers() {
             console.log(`Using device: ${device}`);
 
             // Create text generation pipeline with progress tracking
+            // Create text generation pipeline with progress tracking
+            const isQwen = modelId.toLowerCase().includes('qwen');
             const pipe = await pipeline('text-generation', modelId, {
                 device,
-                dtype: 'fp32', // Qwen works best with fp32 or q8, let auto-detect handle if possible
+                dtype: 'fp32', // Qwen works best with fp32 or q8
+                // Explicitly request quantized ONNX file for Qwen to avoid looking for model.onnx
+                // Transformers.js adds .onnx extension automatically
+                model_file_name: isQwen ? 'decoder_model_merged_quantized' : undefined,
                 progress_callback: (progress: any) => {
                     console.log('Progress:', progress);
                     if (progress.status === 'progress' && progress.progress !== undefined) {

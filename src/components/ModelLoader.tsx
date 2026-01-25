@@ -11,10 +11,12 @@ interface ModelLoaderProps {
 }
 
 // Preset models known to work well with transformers.js
+// Preset models known to work well with transformers.js
 const PRESET_MODELS = [
-    { id: 'Xenova/Qwen1.5-0.5B-Chat', name: 'Qwen 1.5 (0.5B)', size: '1GB', desc: 'Smart & Fast', recommended: true },
+    { id: 'Xenova/Qwen1.5-0.5B', name: 'Qwen 1.5 (0.5B)', size: '1GB', desc: 'Base Model', recommended: true },
     { id: 'Xenova/distilgpt2', name: 'DistilGPT-2', size: '353MB', desc: 'Faster', recommended: false },
     { id: 'Xenova/TinyStories-33M', name: 'TinyStories', size: '100MB', desc: 'Tiny', recommended: false },
+    { id: 'Xenova/bert-base-uncased', name: 'BERT Base', size: '256MB', desc: 'Encoder Only', recommended: false },
 ];
 
 export function ModelLoader({
