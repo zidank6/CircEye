@@ -237,76 +237,85 @@ function App() {
                     )}
                 </aside>
 
-            <section className="viz-center">
-                {result ? (
-                    <>
-                        <div className="viz-header">
-                            <h2>
-                                Attention Patterns
-                                {isComparing && <span className="ablation-badge">ABLATED VIEW</span>}
-                            </h2>
-                            <div className="export-controls">
-                                <button onClick={() => handleExport('png')}>Export PNG</button>
-                                <button onClick={() => handleExport('svg')}>Export SVG</button>
+                <section className="viz-center">
+                    {result ? (
+                        <>
+                            <div className="viz-header">
+                                <h2>
+                                    Attention Patterns
+                                    {isComparing && <span className="ablation-badge">ABLATED VIEW</span>}
+                                </h2>
+                                <div className="export-controls">
+                                    <button onClick={() => handleExport('png')}>Export PNG</button>
+                                    <button onClick={() => handleExport('svg')}>Export SVG</button>
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Show ablation comparison if active */}
-                        {isComparing && ablationResult && (
-                            <AblationComparison
-                                result={ablationResult}
-                                onClose={clearAblation}
-                            />
-                        )}
+                            {/* Show ablation comparison if active */}
+                            {isComparing && ablationResult && (
+                                <AblationComparison
+                                    result={ablationResult}
+                                    onClose={clearAblation}
+                                />
+                            )}
 
-                        {/* Show generated output prominently */}
-                        <div className="generated-output">
-                            <h3>Model Output:</h3>
-                            <div className="output-text">{result.output}</div>
-                            <div className="output-note">
-                                Note: DistilGPT-2 is a small model (82M params). It may not handle complex reasoning well.
-                                Try simpler patterns like "The cat sat on the mat. The cat sat on the"
+                            {/* Show generated output prominently */}
+                            <div className="generated-output">
+                                <h3>Model Output:</h3>
+                                <div className="output-text">{result.output}</div>
+                                <div className="output-note">
+                                    {modelInfo?.name.includes('Qwen') ? (
+                                        <span>
+                                            <strong>Qwen 1.5 (0.5B)</strong> is a capable base model. It works best with <strong>completions</strong> (e.g., code snippets, story continuation) and <strong>few-shot examples</strong>.
+                                            It is not an instruction-tuned chat model, so it won't "answer" questions directly unless prodded.
+                                        </span>
+                                    ) : (
+                                        <span>
+                                            Note: Small models like DistilGPT-2 (82M) struggle with complex logic.
+                                            Try simple repetitions or pattern completions.
+                                        </span>
+                                    )}
+                                </div>
                             </div>
-                        </div>
 
-                        <div className="viz-container">
-                            <AttentionViz
-                                attentions={displayAttentions}
-                                attentionSource={isComparing ? 'synthetic' : result.attentionSource}
-                                tokens={result.tokens}
-                                numLayers={modelInfo?.numLayers || 6}
-                                numHeads={modelInfo?.numHeads || 12}
-                                onSvgRef={setSvgElement}
+                            <div className="viz-container">
+                                <AttentionViz
+                                    attentions={displayAttentions}
+                                    attentionSource={isComparing ? 'synthetic' : result.attentionSource}
+                                    tokens={result.tokens}
+                                    numLayers={modelInfo?.numLayers || 6}
+                                    numHeads={modelInfo?.numHeads || 12}
+                                    onSvgRef={setSvgElement}
+                                />
+                            </div>
+
+                            <div className="lens-container">
+                                <LogitLens topPredictions={result.topPredictions} />
+                            </div>
+                        </>
+                    ) : (
+                        <div className="empty-state">
+                            <p>Load a model and run a prompt to see visualizations.</p>
+                        </div>
+                    )}
+                </section>
+
+                <aside className="sidebar-right">
+                    {result && (
+                        <>
+                            <CircuitInsights
+                                circuits={detectedCircuits}
+                                onAblateCircuit={handleAblateCircuit}
                             />
-                        </div>
-
-                        <div className="lens-container">
-                            <LogitLens topPredictions={result.topPredictions} />
-                        </div>
-                    </>
-                ) : (
-                    <div className="empty-state">
-                        <p>Load a model and run a prompt to see visualizations.</p>
-                    </div>
-                )}
-            </section>
-
-            <aside className="sidebar-right">
-                {result && (
-                    <>
-                        <CircuitInsights
-                            circuits={detectedCircuits}
-                            onAblateCircuit={handleAblateCircuit}
-                        />
-                        <div className="divider" />
-                        <CircuitGraph circuits={result.circuits} />
-                    </>
-                )}
-                <ExplanationPanel
-                    onPromptSelect={setSelectedPrompt}
-                />
-            </aside>
-        </main>
+                            <div className="divider" />
+                            <CircuitGraph circuits={result.circuits} />
+                        </>
+                    )}
+                    <ExplanationPanel
+                        onPromptSelect={setSelectedPrompt}
+                    />
+                </aside>
+            </main>
         </div>
     );
 }

@@ -38,18 +38,20 @@ export function useTransformers() {
 
             // Use WebGPU if available, fallback to WASM
             // @ts-ignore - navigator.gpu
-            const device = navigator.gpu ? 'webgpu' : 'wasm';
+            const isQwen = modelId.toLowerCase().includes('qwen');
+            // Force WASM for Qwen due to WebGPU GQA bug causing garbage output
+            const device = isQwen ? 'wasm' : (navigator.gpu ? 'webgpu' : 'wasm');
             console.log(`Using device: ${device}`);
 
             // Create text generation pipeline with progress tracking
             // Create text generation pipeline with progress tracking
-            const isQwen = modelId.toLowerCase().includes('qwen');
             const pipe = await pipeline('text-generation', modelId, {
                 device,
-                dtype: 'fp32', // Qwen works best with fp32 or q8
+                dtype: isQwen ? 'q8' : 'fp32', // Use q8 for quantized Qwen, fp32 for others
                 // Explicitly request quantized ONNX file for Qwen to avoid looking for model.onnx
                 // Transformers.js adds .onnx extension automatically
-                model_file_name: isQwen ? 'decoder_model_merged_quantized' : undefined,
+                // It also adds _quantized if quantized: true is set
+                model_file_name: isQwen ? 'decoder_model_merged' : undefined,
                 progress_callback: (progress: any) => {
                     console.log('Progress:', progress);
                     if (progress.status === 'progress' && progress.progress !== undefined) {
